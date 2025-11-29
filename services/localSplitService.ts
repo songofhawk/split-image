@@ -209,24 +209,157 @@ const detectAxis = (
         edges.splice(0, edges.length, ...filteredEdges);
     }
 
+    // --- Method 3: Background Coverage Detection ---
+    // Best for grids with solid background color (white, gray, black, etc.)
+    // Checks if a line is composed almost entirely of the background color.
+
+    const bgGaps: number[] = [];
+
+    // Estimate background color from the edges of the image
+    // Sample top-left, top-right, bottom-left, bottom-right
+    const corners = [
+        0,
+        (width - 1) * 4,
+        (width * (height - 1)) * 4,
+        (width * height - 1) * 4
+    ];
+
+    // Simple heuristic: Average of corners, or just pick top-left if they vary?
+    // Let's try to find the most common color among edge pixels (Mode)
+    // Sampling edges
+    const edgeSamples: { r: number, g: number, b: number }[] = [];
+    const edgeStep = Math.max(1, Math.floor(limit / 50)); // Sample ~50 points per edge
+
+    // Top & Bottom edges
+    for (let x = 0; x < width; x += Math.max(1, Math.floor(width / 50))) {
+        const idxTop = x * 4;
+        const idxBot = (width * (height - 1) + x) * 4;
+        edgeSamples.push({ r: data[idxTop], g: data[idxTop + 1], b: data[idxTop + 2] });
+        edgeSamples.push({ r: data[idxBot], g: data[idxBot + 1], b: data[idxBot + 2] });
+    }
+    // Left & Right edges
+    for (let y = 0; y < height; y += Math.max(1, Math.floor(height / 50))) {
+        const idxLeft = (y * width) * 4;
+        const idxRight = (y * width + width - 1) * 4;
+        edgeSamples.push({ r: data[idxLeft], g: data[idxLeft + 1], b: data[idxLeft + 2] });
+        edgeSamples.push({ r: data[idxRight], g: data[idxRight + 1], b: data[idxRight + 2] });
+    }
+
+    // Find median/mode color to be robust against noise/watermarks
+    // Quantize colors to bucket similar ones
+    const colorBuckets: { [key: string]: number } = {};
+    let maxCount = 0;
+    let bgColor = { r: 255, g: 255, b: 255 }; // Default white
+
+    for (const c of edgeSamples) {
+        const key = `${Math.floor(c.r / 10)},${Math.floor(c.g / 10)},${Math.floor(c.b / 10)}`;
+        colorBuckets[key] = (colorBuckets[key] || 0) + 1;
+        if (colorBuckets[key] > maxCount) {
+            maxCount = colorBuckets[key];
+            bgColor = c;
+        }
+    }
+
+    // Scan for lines that match background color
+    const bgThreshold = 30; // Tolerance for background color matching
+    const coverageThreshold = 0.98; // Line must be 98% background
+
+    let inBgGap = false;
+    let bgGapStart = 0;
+
+    for (let i = 0; i < limit; i++) {
+        let bgMatchCount = 0;
+        let totalCount = 0;
+        const step = 4;
+
+        for (let j = 0; j < crossLimit; j += step) {
+            const idx = isHorizontal
+                ? (i * width + j) * 4
+                : (j * width + i) * 4;
+
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+
+            if (Math.abs(r - bgColor.r) < bgThreshold &&
+                Math.abs(g - bgColor.g) < bgThreshold &&
+                Math.abs(b - bgColor.b) < bgThreshold) {
+                bgMatchCount++;
+            }
+            totalCount++;
+        }
+
+        const coverage = bgMatchCount / totalCount;
+
+        if (coverage >= coverageThreshold) {
+            if (!inBgGap) {
+                inBgGap = true;
+                bgGapStart = i;
+            }
+        } else {
+            if (inBgGap) {
+                inBgGap = false;
+                const bgGapEnd = i - 1;
+                if (bgGapEnd - bgGapStart >= 1) {
+                    bgGaps.push(Math.floor((bgGapStart + bgGapEnd) / 2));
+                }
+            }
+        }
+    }
+    if (inBgGap) {
+        const bgGapEnd = limit - 1;
+        if (bgGapEnd - bgGapStart >= 1) {
+            bgGaps.push(Math.floor((bgGapStart + bgGapEnd) / 2));
+        }
+    }
+
     // --- Combine Results ---
 
     const finalSplits: number[] = [];
-    const margin = limit * 0.02; // Ignore splits within 2% of edges
+    const margin = limit * 0.02;
 
-    // Add gaps first (highest confidence)
-    for (const gap of gaps) {
+    // Strategy: 
+    // 1. If we found Background Gaps, they are the Strongest signal. Use them.
+    // 2. If Background Gaps are found, we might NOT need Gradient edges (unless they are far from gaps).
+    // 3. If NO Background Gaps are found (e.g. seamless stitch), rely on Gradient/Variance Gaps.
+
+    const useBgGaps = bgGaps.length > 0;
+
+    // Add Background Gaps
+    for (const gap of bgGaps) {
         if (gap > margin && gap < limit - margin) {
             finalSplits.push(gap);
         }
     }
 
-    // Add edges if not close to existing gaps
+    // If we have BG gaps, we are strict about adding other types
+    // Only add Variance Gaps if they are far from BG gaps
+    for (const gap of gaps) {
+        if (gap <= margin || gap >= limit - margin) continue;
+
+        const isDuplicate = finalSplits.some(split => Math.abs(split - gap) < 20);
+        if (!isDuplicate) {
+            // If we have BG gaps, only add this if it's really distinct? 
+            // Actually, Variance Gaps usually overlap with BG gaps. 
+            // If Variance Gap exists but BG Gap doesn't, it means it's a "low variance" area that isn't "background color".
+            // e.g. a solid dark bar in a white background. This is a valid split.
+            finalSplits.push(gap);
+        }
+    }
+
+    // Add Edges (Gradient) - Lowest priority
+    // Only if we haven't found enough splits? Or just standard de-dupe.
+    // If we found BG gaps, edges inside content are likely noise.
+    // So we increase minDistance for edges if we have BG gaps.
+
     for (const edge of edges) {
         if (edge <= margin || edge >= limit - margin) continue;
 
         const isDuplicate = finalSplits.some(split => Math.abs(split - edge) < 20);
         if (!isDuplicate) {
+            // Extra check: If we have BG gaps, implies a grid structure.
+            // Don't add random edges unless they are strong?
+            // For now, just add them, but the high threshold in Gradient detection should filter noise.
             finalSplits.push(edge);
         }
     }
