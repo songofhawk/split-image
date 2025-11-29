@@ -54,43 +54,91 @@ const detectAxis = (
     const limit = isHorizontal ? height : width;
     const crossLimit = isHorizontal ? width : height;
 
-    // Store the "energy" or "difference" score for each line
-    const scores: number[] = new Array(limit).fill(0);
+    // --- Method 1: Gap Detection (Low Variance) ---
+    // Ideal for images with whitespace/padding between grid items.
 
-    // 1. Calculate difference between adjacent lines (Gradient)
-    // We start from 1 because we compare with i-1
-    for (let i = 1; i < limit; i++) {
-        let diffSum = 0;
+    const variances = new Float32Array(limit);
 
-        // Optimization: Sample pixels to improve performance on large images
-        // Step size of 2 or 4 is usually enough for visual boundaries
-        const step = 2;
+    // Calculate variance for each line
+    for (let i = 0; i < limit; i++) {
+        let sum = 0;
+        let sumSq = 0;
+        let count = 0;
+
+        // Sampling optimization
+        const step = 4;
 
         for (let j = 0; j < crossLimit; j += step) {
-            const idx1 = isHorizontal
+            const idx = isHorizontal
                 ? (i * width + j) * 4
                 : (j * width + i) * 4;
 
-            const idx2 = isHorizontal
-                ? ((i - 1) * width + j) * 4
-                : (j * width + (i - 1)) * 4;
+            // Convert to grayscale for variance calculation
+            const val = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+            sum += val;
+            sumSq += val * val;
+            count++;
+        }
 
-            // Simple Euclidean distance or Manhattan distance of RGB
+        const mean = sum / count;
+        // Variance = E[X^2] - (E[X])^2
+        variances[i] = (sumSq / count) - (mean * mean);
+    }
+
+    // Find continuous regions of low variance
+    // Threshold: Pure color is 0. Allow some noise (compression artifacts, paper texture).
+    // 100 is a safe bet for "solid-ish" areas in 0-255^2 space.
+    const gapThreshold = 100;
+    const gaps: number[] = [];
+    let inGap = false;
+    let gapStart = 0;
+
+    for (let i = 0; i < limit; i++) {
+        if (variances[i] < gapThreshold) {
+            if (!inGap) {
+                inGap = true;
+                gapStart = i;
+            }
+        } else {
+            if (inGap) {
+                inGap = false;
+                const gapEnd = i - 1;
+                // Only consider gaps that are wide enough (e.g. > 2px) to avoid noise
+                if (gapEnd - gapStart >= 2) {
+                    gaps.push(Math.floor((gapStart + gapEnd) / 2));
+                }
+            }
+        }
+    }
+    // Handle gap at the very end
+    if (inGap) {
+        const gapEnd = limit - 1;
+        if (gapEnd - gapStart >= 2) {
+            gaps.push(Math.floor((gapStart + gapEnd) / 2));
+        }
+    }
+
+    // --- Method 2: Gradient Detection (Edges) ---
+    // Good for seamless stitches or when gaps are not solid colors.
+
+    const scores = new Float32Array(limit);
+    for (let i = 1; i < limit; i++) {
+        let diffSum = 0;
+        const step = 2;
+        for (let j = 0; j < crossLimit; j += step) {
+            const idx1 = isHorizontal ? (i * width + j) * 4 : (j * width + i) * 4;
+            const idx2 = isHorizontal ? ((i - 1) * width + j) * 4 : (j * width + (i - 1)) * 4;
             const rDiff = Math.abs(data[idx1] - data[idx2]);
             const gDiff = Math.abs(data[idx1 + 1] - data[idx2 + 1]);
             const bDiff = Math.abs(data[idx1 + 2] - data[idx2 + 2]);
-
             diffSum += (rDiff + gDiff + bDiff);
         }
-
-        // Normalize
         scores[i] = diffSum / (crossLimit / step);
     }
 
-    // 2. Smooth the scores to reduce noise (like rain drops or texture)
-    // Simple moving average
-    const smoothedScores = [...scores];
-    const smoothWindow = 3;
+    // Smooth scores
+    const smoothedScores = new Float32Array(limit);
+    const smoothWindow = 2;
     for (let i = smoothWindow; i < limit - smoothWindow; i++) {
         let sum = 0;
         for (let k = -smoothWindow; k <= smoothWindow; k++) {
@@ -99,61 +147,63 @@ const detectAxis = (
         smoothedScores[i] = sum / (2 * smoothWindow + 1);
     }
 
-    // 3. Detect Peaks
-    const nonZeroScores = smoothedScores.filter(s => s > 0);
-    if (nonZeroScores.length === 0) return [];
+    // Detect Peaks
+    const edges: number[] = [];
+    const nonZeroScores = Array.from(smoothedScores).filter(s => s > 0);
+    if (nonZeroScores.length > 0) {
+        const mean = nonZeroScores.reduce((a, b) => a + b, 0) / nonZeroScores.length;
+        const variance = nonZeroScores.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / nonZeroScores.length;
+        const stdDev = Math.sqrt(variance);
 
-    const mean = nonZeroScores.reduce((a, b) => a + b, 0) / nonZeroScores.length;
-    const variance = nonZeroScores.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / nonZeroScores.length;
-    const stdDev = Math.sqrt(variance);
+        // Lower threshold slightly to catch subtle edges
+        const threshold = mean + 2.0 * stdDev;
 
-    // Threshold: Increased to avoid false positives in textured images
-    // Mean + 2.5 * StdDev is a strong filter for "outliers" (edges)
-    const threshold = mean + 2.5 * stdDev;
+        const minDistance = Math.max(20, limit / 50); // Reduced min distance
 
-    const candidates: number[] = [];
-
-    // 4. Peak extraction with Non-Maximum Suppression window
-    // Minimum distance between splits. 
-    // For a grid, splits are rarely closer than 5% of the total dimension or at least 40px.
-    const minDistance = Math.max(40, limit / 20);
-
-    for (let i = 1; i < limit - 1; i++) {
-        if (smoothedScores[i] > threshold) {
-            // Check if it's a local maximum in a small neighborhood
-            let isMax = true;
-            const localCheck = 5;
-            const start = Math.max(0, i - localCheck);
-            const end = Math.min(limit, i + localCheck);
-
-            for (let k = start; k < end; k++) {
-                if (smoothedScores[k] > smoothedScores[i]) {
-                    isMax = false;
-                    break;
-                }
-            }
-
-            if (isMax) {
-                // Ensure we don't add points too close to existing ones
-                // If close, keep the one with higher score
-                if (candidates.length > 0) {
-                    const lastIdx = candidates[candidates.length - 1];
-                    if (i - lastIdx < minDistance) {
-                        if (smoothedScores[i] > smoothedScores[lastIdx]) {
-                            // Replace the previous one because this one is stronger
-                            candidates.pop();
-                            candidates.push(i);
-                        }
-                        // Else: ignore this one, previous was stronger
-                    } else {
-                        candidates.push(i);
+        for (let i = 1; i < limit - 1; i++) {
+            if (smoothedScores[i] > threshold) {
+                let isMax = true;
+                const localCheck = 5;
+                const start = Math.max(0, i - localCheck);
+                const end = Math.min(limit, i + localCheck);
+                for (let k = start; k < end; k++) {
+                    if (smoothedScores[k] > smoothedScores[i]) {
+                        isMax = false;
+                        break;
                     }
-                } else {
-                    candidates.push(i);
+                }
+                if (isMax) {
+                    edges.push(i);
                 }
             }
         }
+
+        // Filter edges by distance
+        const filteredEdges: number[] = [];
+        if (edges.length > 0) {
+            filteredEdges.push(edges[0]);
+            for (let i = 1; i < edges.length; i++) {
+                if (edges[i] - filteredEdges[filteredEdges.length - 1] > minDistance) {
+                    filteredEdges.push(edges[i]);
+                }
+            }
+        }
+        edges.splice(0, edges.length, ...filteredEdges);
     }
 
-    return candidates;
+    // --- Combine Results ---
+    // Prefer Gaps. If a Gap is found, ignore Edges that are close to it.
+    // If no Gap is close, include the Edge.
+
+    const finalSplits: number[] = [...gaps];
+
+    for (const edge of edges) {
+        // Check if this edge is close to any existing gap split
+        const isDuplicate = gaps.some(gap => Math.abs(gap - edge) < 20);
+        if (!isDuplicate) {
+            finalSplits.push(edge);
+        }
+    }
+
+    return finalSplits.sort((a, b) => a - b);
 };
