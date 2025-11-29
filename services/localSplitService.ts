@@ -313,43 +313,33 @@ const detectAxis = (
         }
     }
 
-    // --- Method 4: Solid Line Detection with Color Complexity Check ---
-    // Detects lines that are solid color but NOT background color.
-    // CRITICAL: Filter out lines that pass through text/icons by checking "Color Complexity".
-    // A true split line should have very few unique colors (background + line color + maybe 1-2 anti-aliasing shades).
-    // A line passing through text will have many shades due to anti-aliasing and complex shapes.
+    // --- Method 4: Solid Line Detection with Strict Color Complexity ---
 
     const solidLines: number[] = [];
-    const solidLineThreshold = 50; // Relaxed variance threshold, we rely on complexity check
+    const solidLineThreshold = 30; // Moderate variance threshold
 
     for (let i = 0; i < limit; i++) {
         if (variances[i] < solidLineThreshold) {
-            // Check Color Complexity
-            // Count unique quantized colors in this line
             const uniqueColors = new Set<string>();
             let rSum = 0, gSum = 0, bSum = 0, count = 0;
 
-            const step = 2; // Check more pixels for accuracy
+            const step = 2;
             for (let j = 0; j < crossLimit; j += step) {
                 const idx = isHorizontal ? (i * width + j) * 4 : (j * width + i) * 4;
                 const r = data[idx];
                 const g = data[idx + 1];
                 const b = data[idx + 2];
 
-                // Quantize to reduce noise (e.g. 16 levels)
-                const key = `${Math.floor(r / 16)},${Math.floor(g / 16)},${Math.floor(b / 16)}`;
+                // Quantize to 32 levels for stricter matching
+                const key = `${Math.floor(r / 32)},${Math.floor(g / 32)},${Math.floor(b / 32)}`;
                 uniqueColors.add(key);
 
                 rSum += r; gSum += g; bSum += b;
                 count++;
             }
 
-            // Threshold for unique colors. 
-            // Pure line on bg = 2 colors. With AA = maybe 4-5.
-            // Text line = many more.
-            if (uniqueColors.size <= 5) {
-                // It's a low-complexity line. 
-                // Now check if it's background.
+            // STRICT: True split lines should have very few colors (2-3 max)
+            if (uniqueColors.size <= 3) {
                 const rAvg = rSum / count;
                 const gAvg = gSum / count;
                 const bAvg = bSum / count;
@@ -380,101 +370,75 @@ const detectAxis = (
         mergedSolidLines.push(Math.floor((start + prev) / 2));
     }
 
-    // --- Combine & Filter Results ---
+    // --- Combine & Filter ---
 
     interface Candidate {
         pos: number;
         score: number;
-        type: 'solid' | 'bg' | 'gap' | 'edge';
+        type: 'solid' | 'bg' | 'gap';
     }
 
     let candidates: Candidate[] = [];
 
-    // Add Solid Lines (Highest Priority)
+    // ONLY use strong signals
     for (const line of mergedSolidLines) {
         candidates.push({ pos: line, score: 200, type: 'solid' });
     }
 
-    // Add Bg Gaps
     for (const gap of bgGaps) {
         if (!candidates.some(c => Math.abs(c.pos - gap) < 10)) {
             candidates.push({ pos: gap, score: 100, type: 'bg' });
         }
     }
 
-    // Add Variance Gaps
-    for (const gap of gaps) {
-        if (!candidates.some(c => Math.abs(c.pos - gap) < 10)) {
+    // Only add variance gaps if we have NO strong signals
+    if (candidates.length === 0) {
+        for (const gap of gaps) {
             candidates.push({ pos: gap, score: 50, type: 'gap' });
-        }
-    }
-
-    // Add Edges
-    // Also apply Color Complexity Check to Edges!
-    // If an edge has high color complexity, it's likely inside content.
-    for (const edge of edges) {
-        if (!candidates.some(c => Math.abs(c.pos - edge) < 10)) {
-            // Check complexity for edge too
-            const uniqueColors = new Set<string>();
-            const step = 4;
-            for (let j = 0; j < crossLimit; j += step) {
-                const idx = isHorizontal ? (edge * width + j) * 4 : (j * width + edge) * 4;
-                const key = `${Math.floor(data[idx] / 16)},${Math.floor(data[idx + 1] / 16)},${Math.floor(data[idx + 2] / 16)}`;
-                uniqueColors.add(key);
-            }
-
-            // Edges might be gradients, so complexity can be slightly higher.
-            // But if it's > 10, it's definitely content.
-            if (uniqueColors.size <= 8) {
-                candidates.push({ pos: edge, score: smoothedScores[edge], type: 'edge' });
-            }
         }
     }
 
     // Sort by position
     candidates.sort((a, b) => a.pos - b.pos);
 
-    // Filter out edges too close to borders
+    // Filter borders
     const margin = limit * 0.02;
     candidates = candidates.filter(c => c.pos > margin && c.pos < limit - margin);
 
-    // --- Grid Regularity Filter ---
-    // If we have many candidates, try to find a regular pattern.
+    // --- STRICT Grid Regularity Filter ---
 
+    // Enforce minimum distance (assume max 8 items per axis)
+    const absoluteMinDist = limit / 8;
+
+    if (candidates.length > 1) {
+        const filtered: Candidate[] = [candidates[0]];
+        for (let i = 1; i < candidates.length; i++) {
+            if (candidates[i].pos - filtered[filtered.length - 1].pos >= absoluteMinDist) {
+                filtered.push(candidates[i]);
+            }
+        }
+        candidates = filtered;
+    }
+
+    // Grid pattern matching
     if (candidates.length > 2) {
-        // 1. Calculate all mutual distances between candidates
-        // We are looking for a "Base Unit"
         const distances: number[] = [];
-
-        // Add distance from start (0) to first candidate?
-        // Yes, grid usually starts from top/left
         distances.push(candidates[0].pos);
-
         for (let i = 0; i < candidates.length - 1; i++) {
             distances.push(candidates[i + 1].pos - candidates[i].pos);
         }
 
-        // Also check distance from last to end?
-        // distances.push(limit - candidates[candidates.length-1].pos);
-
-        // 2. Find the Mode (most common distance) with tolerance
-        const tolerance = limit * 0.05; // 5% tolerance
+        const tolerance = limit * 0.08; // Slightly more lenient
         const clusters: { val: number, count: number, members: number[] }[] = [];
 
-        // Ignore small distances (e.g. text lines)
-        // Assume grid items are at least 1/10 of the image
-        const minGridSize = limit / 10;
-
         for (const d of distances) {
-            // Ignore very small distances (noise)
-            if (d < minGridSize) continue;
+            if (d < absoluteMinDist) continue;
 
             let found = false;
             for (const c of clusters) {
                 if (Math.abs(c.val - d) < tolerance) {
                     c.count++;
                     c.members.push(d);
-                    // Update average val
                     c.val = c.members.reduce((a, b) => a + b, 0) / c.members.length;
                     found = true;
                     break;
@@ -485,53 +449,26 @@ const detectAxis = (
             }
         }
 
-        // Sort clusters by count (desc)
         clusters.sort((a, b) => b.count - a.count);
 
         if (clusters.length > 0 && clusters[0].count >= 2) {
-            // We found a pattern!
             const baseUnit = clusters[0].val;
-
-            // Filter candidates that fit into the grid (approx multiples of baseUnit)
-            // We anchor at 0.
             const validCandidates: Candidate[] = [];
 
             for (const c of candidates) {
-                // Check if pos is close to N * baseUnit
                 const multiple = Math.round(c.pos / baseUnit);
                 const expected = multiple * baseUnit;
 
-                // Stricter check for weak signals (edges), looser for strong signals (solid/bg)
-                const localTolerance = (c.type === 'solid' || c.type === 'bg') ? tolerance * 1.5 : tolerance;
-
-                if (Math.abs(c.pos - expected) < localTolerance) {
+                if (Math.abs(c.pos - expected) < tolerance) {
                     validCandidates.push(c);
                 }
             }
 
-            // If we filtered too aggressively and lost almost everything, revert?
-            // Only apply if we kept at least some structure.
             if (validCandidates.length > 0) {
                 candidates = validCandidates;
             }
         }
     }
 
-    // Final cleanup: Remove duplicates that might still exist (if any)
-    // and sort by position
-    const finalSplits = candidates.map(c => c.pos).sort((a, b) => a - b);
-
-    // Ensure min distance between final splits
-    const minFinalDist = Math.max(40, limit / 20);
-    const result: number[] = [];
-    if (finalSplits.length > 0) {
-        result.push(finalSplits[0]);
-        for (let i = 1; i < finalSplits.length; i++) {
-            if (finalSplits[i] - result[result.length - 1] > minFinalDist) {
-                result.push(finalSplits[i]);
-            }
-        }
-    }
-
-    return result;
+    return candidates.map(c => c.pos).sort((a, b) => a - b);
 };
