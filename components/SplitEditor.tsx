@@ -10,7 +10,7 @@ interface SplitEditorProps {
   activeDirection: SplitDirection;
   onConfirm: (rowSplits: number[], colSplits: number[]) => void;
   onCancel: () => void;
-  onReRunAi: () => void;
+  onReRunDetection: () => void;
   onDirectionChange: (dir: SplitDirection) => void;
   onSplitsChange: (rows: number[], cols: number[]) => void;
 }
@@ -25,7 +25,7 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
   activeDirection,
   onConfirm,
   onCancel,
-  onReRunAi,
+  onReRunDetection,
   onDirectionChange,
   onSplitsChange
 }) => {
@@ -45,23 +45,23 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
     if (!activeDrag || !containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    
+
     if (activeDrag.type === 'row') {
-        const scale = rect.height / dimensions.height;
-        let val = (e.clientY - rect.top) / scale;
-        val = Math.max(0, Math.min(val, dimensions.height));
-        
-        const newRows = [...rowSplits];
-        newRows[activeDrag.index] = Math.round(val);
-        onSplitsChange(newRows.sort((a, b) => a - b), colSplits);
+      const scale = rect.height / dimensions.height;
+      let val = (e.clientY - rect.top) / scale;
+      val = Math.max(0, Math.min(val, dimensions.height));
+
+      const newRows = [...rowSplits];
+      newRows[activeDrag.index] = Math.round(val);
+      onSplitsChange(newRows.sort((a, b) => a - b), colSplits);
     } else {
-        const scale = rect.width / dimensions.width;
-        let val = (e.clientX - rect.left) / scale;
-        val = Math.max(0, Math.min(val, dimensions.width));
-        
-        const newCols = [...colSplits];
-        newCols[activeDrag.index] = Math.round(val);
-        onSplitsChange(rowSplits, newCols.sort((a, b) => a - b));
+      const scale = rect.width / dimensions.width;
+      let val = (e.clientX - rect.left) / scale;
+      val = Math.max(0, Math.min(val, dimensions.width));
+
+      const newCols = [...colSplits];
+      newCols[activeDrag.index] = Math.round(val);
+      onSplitsChange(rowSplits, newCols.sort((a, b) => a - b));
     }
   };
 
@@ -71,48 +71,48 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
 
   const addSplit = () => {
     if (activeDirection === SplitDirection.HORIZONTAL) {
-        // Add row split
-        const points = [0, ...rowSplits, dimensions.height];
-        let maxGap = 0;
-        let insertPos = dimensions.height / 2;
+      // Add row split
+      const points = [0, ...rowSplits, dimensions.height];
+      let maxGap = 0;
+      let insertPos = dimensions.height / 2;
 
-        for (let i = 0; i < points.length - 1; i++) {
-          const gap = points[i + 1] - points[i];
-          if (gap > maxGap) {
-            maxGap = gap;
-            insertPos = points[i] + gap / 2;
-          }
+      for (let i = 0; i < points.length - 1; i++) {
+        const gap = points[i + 1] - points[i];
+        if (gap > maxGap) {
+          maxGap = gap;
+          insertPos = points[i] + gap / 2;
         }
-        const newRows = [...rowSplits, Math.round(insertPos)].sort((a, b) => a - b);
-        onSplitsChange(newRows, colSplits);
+      }
+      const newRows = [...rowSplits, Math.round(insertPos)].sort((a, b) => a - b);
+      onSplitsChange(newRows, colSplits);
     } else {
-        // Add col split
-        const points = [0, ...colSplits, dimensions.width];
-        let maxGap = 0;
-        let insertPos = dimensions.width / 2;
+      // Add col split
+      const points = [0, ...colSplits, dimensions.width];
+      let maxGap = 0;
+      let insertPos = dimensions.width / 2;
 
-        for (let i = 0; i < points.length - 1; i++) {
-          const gap = points[i + 1] - points[i];
-          if (gap > maxGap) {
-            maxGap = gap;
-            insertPos = points[i] + gap / 2;
-          }
+      for (let i = 0; i < points.length - 1; i++) {
+        const gap = points[i + 1] - points[i];
+        if (gap > maxGap) {
+          maxGap = gap;
+          insertPos = points[i] + gap / 2;
         }
-        const newCols = [...colSplits, Math.round(insertPos)].sort((a, b) => a - b);
-        onSplitsChange(rowSplits, newCols);
+      }
+      const newCols = [...colSplits, Math.round(insertPos)].sort((a, b) => a - b);
+      onSplitsChange(rowSplits, newCols);
     }
   };
 
   const removeSplit = (type: 'row' | 'col', index: number) => {
     if (type === 'row') {
-        onSplitsChange(rowSplits.filter((_, i) => i !== index), colSplits);
+      onSplitsChange(rowSplits.filter((_, i) => i !== index), colSplits);
     } else {
-        onSplitsChange(rowSplits, colSplits.filter((_, i) => i !== index));
+      onSplitsChange(rowSplits, colSplits.filter((_, i) => i !== index));
     }
   };
 
   return (
-    <div 
+    <div
       className="flex flex-col items-center w-full h-full"
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
@@ -126,41 +126,41 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
             Current Tool: <span className="text-cyan-400 font-bold">{isHorizontalMode ? 'Horizontal Lines' : 'Vertical Lines'}</span>
           </span>
         </div>
-        
+
         <div className="flex flex-wrap justify-center gap-3">
-           {/* Direction Toggle */}
-           <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
-             <button
-               onClick={() => onDirectionChange(SplitDirection.HORIZONTAL)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all
+          {/* Direction Toggle */}
+          <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
+            <button
+              onClick={() => onDirectionChange(SplitDirection.HORIZONTAL)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all
                  ${isHorizontalMode ? 'bg-cyan-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'}
                `}
-             >
-               <Rows className="w-4 h-4" />
-               Rows
-             </button>
-             <button
-               onClick={() => onDirectionChange(SplitDirection.VERTICAL)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all
+            >
+              <Rows className="w-4 h-4" />
+              Rows
+            </button>
+            <button
+              onClick={() => onDirectionChange(SplitDirection.VERTICAL)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all
                  ${!isHorizontalMode ? 'bg-cyan-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'}
                `}
-             >
-               <Columns className="w-4 h-4" />
-               Cols
-             </button>
-           </div>
+            >
+              <Columns className="w-4 h-4" />
+              Cols
+            </button>
+          </div>
 
           <div className="h-8 w-px bg-slate-700 hidden md:block mx-2"></div>
 
-          <button 
-            onClick={onReRunAi}
+          <button
+            onClick={onReRunDetection}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-cyan-400 bg-cyan-950/30 border border-cyan-900 rounded-lg hover:bg-cyan-900/50 transition-colors"
-            title={`Run AI detection for ${isHorizontalMode ? 'rows' : 'columns'}`}
+            title={`Run auto detection for ${isHorizontalMode ? 'rows' : 'columns'}`}
           >
             <RefreshCcw className="w-4 h-4" />
-            AI Detect ({isHorizontalMode ? 'Rows' : 'Cols'})
+            Auto Detect ({isHorizontalMode ? 'Rows' : 'Cols'})
           </button>
-          <button 
+          <button
             onClick={addSplit}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors"
             title={`Add a new ${isHorizontalMode ? 'horizontal' : 'vertical'} line`}
@@ -175,100 +175,100 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
       <div className="relative border border-slate-700 shadow-2xl bg-black overflow-hidden select-none max-w-[90vw]">
         <div ref={containerRef} className="relative inline-block">
           {/* Main Image */}
-          <img 
-            src={imageSrc} 
-            alt="Original" 
-            className="block pointer-events-none select-none" 
-            style={{ 
-              maxHeight: '70vh', 
+          <img
+            src={imageSrc}
+            alt="Original"
+            className="block pointer-events-none select-none"
+            style={{
+              maxHeight: '70vh',
               maxWidth: '100%',
-              objectFit: 'contain' 
+              objectFit: 'contain'
             }}
           />
-          
+
           {/* --- Render Row Splits (Horizontal Lines) --- */}
           {rowSplits.map((val, index) => {
-             const pct = (val / dimensions.height) * 100;
-             const isDraggingThis = activeDrag?.type === 'row' && activeDrag?.index === index;
-             
-             return (
-               <div
-                 key={`row-${index}`}
-                 className="absolute group z-20"
-                 style={{ top: `${pct}%`, left: 0, width: '100%', height: '2px', transform: 'translateY(-50%)' }}
-               >
-                 <div 
-                   className={`w-full h-full transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.8)]
+            const pct = (val / dimensions.height) * 100;
+            const isDraggingThis = activeDrag?.type === 'row' && activeDrag?.index === index;
+
+            return (
+              <div
+                key={`row-${index}`}
+                className="absolute group z-20"
+                style={{ top: `${pct}%`, left: 0, width: '100%', height: '2px', transform: 'translateY(-50%)' }}
+              >
+                <div
+                  className={`w-full h-full transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.8)]
                      ${isDraggingThis ? 'bg-yellow-400' : 'bg-red-500 group-hover:bg-yellow-400'}
                      ${!isHorizontalMode && !isDraggingThis ? 'opacity-40' : 'opacity-100'} 
                    `}
-                 />
-                 <div 
-                   className="absolute left-0 -top-[11px] w-full h-6 cursor-row-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                   onMouseDown={(e) => handleMouseDown(e, 'row', index)}
-                 >
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); removeSplit('row', index); }}
-                      className="bg-red-600 text-white rounded-full p-1 shadow-lg transform hover:scale-110"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                 </div>
-                 {/* Label */}
-                 <div className={`absolute left-2 -top-5 bg-red-900/80 text-[10px] text-red-100 px-1 rounded pointer-events-none whitespace-nowrap ${isDraggingThis ? 'block' : 'hidden group-hover:block'}`}>
-                   Y: {val}px
-                 </div>
-               </div>
-             );
+                />
+                <div
+                  className="absolute left-0 -top-[11px] w-full h-6 cursor-row-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  onMouseDown={(e) => handleMouseDown(e, 'row', index)}
+                >
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeSplit('row', index); }}
+                    className="bg-red-600 text-white rounded-full p-1 shadow-lg transform hover:scale-110"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+                {/* Label */}
+                <div className={`absolute left-2 -top-5 bg-red-900/80 text-[10px] text-red-100 px-1 rounded pointer-events-none whitespace-nowrap ${isDraggingThis ? 'block' : 'hidden group-hover:block'}`}>
+                  Y: {val}px
+                </div>
+              </div>
+            );
           })}
 
           {/* --- Render Col Splits (Vertical Lines) --- */}
           {colSplits.map((val, index) => {
-             const pct = (val / dimensions.width) * 100;
-             const isDraggingThis = activeDrag?.type === 'col' && activeDrag?.index === index;
+            const pct = (val / dimensions.width) * 100;
+            const isDraggingThis = activeDrag?.type === 'col' && activeDrag?.index === index;
 
-             return (
-               <div
-                 key={`col-${index}`}
-                 className="absolute group z-20"
-                 style={{ left: `${pct}%`, top: 0, height: '100%', width: '2px', transform: 'translateX(-50%)' }}
-               >
-                 <div 
-                   className={`w-full h-full transition-colors shadow-[1px_0_2px_rgba(0,0,0,0.8)]
+            return (
+              <div
+                key={`col-${index}`}
+                className="absolute group z-20"
+                style={{ left: `${pct}%`, top: 0, height: '100%', width: '2px', transform: 'translateX(-50%)' }}
+              >
+                <div
+                  className={`w-full h-full transition-colors shadow-[1px_0_2px_rgba(0,0,0,0.8)]
                      ${isDraggingThis ? 'bg-cyan-300' : 'bg-blue-500 group-hover:bg-cyan-300'}
                      ${isHorizontalMode && !isDraggingThis ? 'opacity-40' : 'opacity-100'}
                    `}
-                 />
-                 <div 
-                   className="absolute top-0 -left-[11px] h-full w-6 cursor-col-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                   onMouseDown={(e) => handleMouseDown(e, 'col', index)}
-                 >
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); removeSplit('col', index); }}
-                      className="bg-blue-600 text-white rounded-full p-1 shadow-lg transform hover:scale-110"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                 </div>
-                 {/* Label */}
-                 <div className={`absolute top-2 -left-2 bg-blue-900/80 text-[10px] text-blue-100 px-1 rounded pointer-events-none whitespace-nowrap ${isDraggingThis ? 'block' : 'hidden group-hover:block'}`}>
-                   X: {val}px
-                 </div>
-               </div>
-             );
+                />
+                <div
+                  className="absolute top-0 -left-[11px] h-full w-6 cursor-col-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  onMouseDown={(e) => handleMouseDown(e, 'col', index)}
+                >
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeSplit('col', index); }}
+                    className="bg-blue-600 text-white rounded-full p-1 shadow-lg transform hover:scale-110"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+                {/* Label */}
+                <div className={`absolute top-2 -left-2 bg-blue-900/80 text-[10px] text-blue-100 px-1 rounded pointer-events-none whitespace-nowrap ${isDraggingThis ? 'block' : 'hidden group-hover:block'}`}>
+                  X: {val}px
+                </div>
+              </div>
+            );
           })}
 
         </div>
       </div>
 
       <div className="mt-6 flex gap-4">
-        <button 
+        <button
           onClick={onCancel}
           className="px-6 py-3 rounded-xl font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
         >
           Cancel
         </button>
-        <button 
+        <button
           onClick={() => onConfirm(rowSplits, colSplits)}
           className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 transform hover:scale-105 transition-all"
         >
