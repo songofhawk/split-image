@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Dimensions, AppState, SplitImage, SplitDirection } from './types';
 import { ImageUploader } from './components/ImageUploader';
 import { SplitEditor } from './components/SplitEditor';
+import { ImageEditor } from './components/ImageEditor';
 import { ResultGallery } from './components/ResultGallery';
 import { LoadingOverlay } from './components/LoadingOverlay';
 import { detectSeamsLocal } from './services/localSplitService';
@@ -143,6 +144,21 @@ const App: React.FC = () => {
     setErrorMsg(null);
   };
 
+  const handleEditImage = () => {
+    setState(AppState.IMAGE_EDIT);
+  };
+
+  const handleImageSave = (newSrc: string) => {
+    const img = new Image();
+    img.onload = () => {
+      setImageDimensions({ width: img.width, height: img.height });
+      setOriginalImageSrc(newSrc);
+      // Re-run detection on the new image
+      processImage(newSrc, img.width, img.height);
+    };
+    img.src = newSrc;
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col">
       {/* Header */}
@@ -201,6 +217,17 @@ const App: React.FC = () => {
                   setRowSplits(rows);
                   setColSplits(cols);
                 }}
+                onEditImage={handleEditImage}
+              />
+            </div>
+          )}
+
+          {state === AppState.IMAGE_EDIT && originalImageSrc && (
+            <div className="w-full h-full animate-in fade-in duration-300">
+              <ImageEditor
+                imageSrc={originalImageSrc}
+                onSave={handleImageSave}
+                onCancel={() => setState(AppState.EDITOR)}
               />
             </div>
           )}

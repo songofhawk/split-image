@@ -13,6 +13,7 @@ export interface SplitImage {
 export enum AppState {
   UPLOAD = 'UPLOAD',
   PROCESSING = 'PROCESSING',
+  IMAGE_EDIT = 'IMAGE_EDIT',
   EDITOR = 'EDITOR',
   RESULTS = 'RESULTS',
 }

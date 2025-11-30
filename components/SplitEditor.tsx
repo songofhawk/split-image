@@ -11,6 +11,7 @@ interface SplitEditorProps {
   onCancel: () => void;
   onReRunDetection: () => void;
   onSplitsChange: (rows: number[], cols: number[]) => void;
+  onEditImage: () => void;
 }
 
 type DragTarget = { type: 'row' | 'col'; index: number } | null;
@@ -23,7 +24,8 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
   onConfirm,
   onCancel,
   onReRunDetection,
-  onSplitsChange
+  onSplitsChange,
+  onEditImage
 }) => {
   const [activeDrag, setActiveDrag] = useState<DragTarget>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -119,6 +121,17 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
         </div>
 
         <div className="flex flex-wrap justify-center gap-3">
+          <button
+            onClick={onEditImage}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors"
+            title="Crop, Resize, or Annotate Image"
+          >
+            <Scissors className="w-4 h-4" />
+            Edit Image
+          </button>
+
+          <div className="h-8 w-px bg-slate-700 hidden md:block mx-2"></div>
+
           <button
             onClick={onReRunDetection}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-cyan-400 bg-cyan-950/30 border border-cyan-900 rounded-lg hover:bg-cyan-900/50 transition-colors"
