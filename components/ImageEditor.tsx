@@ -11,8 +11,12 @@ import {
     RotateCw,
     FlipHorizontal,
     FlipVertical,
-    Undo2
+    Undo2,
+    Eraser,
+    Wand2,
+    Sparkles
 } from 'lucide-react';
+import { floodFill, removeBackgroundAuto } from '../services/imageProcessing';
 
 interface ImageEditorProps {
     imageSrc: string;
@@ -20,7 +24,7 @@ interface ImageEditorProps {
     onCancel: () => void;
 }
 
-type EditMode = 'CROP' | 'RESIZE' | 'ANNOTATE' | null;
+type EditMode = 'CROP' | 'RESIZE' | 'ANNOTATE' | 'BACKGROUND' | null;
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCancel }) => {
     // History Stack
@@ -30,6 +34,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     const currentSrc = history[currentStep];
 
     const [mode, setMode] = useState<EditMode>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
     // Crop State
     const [crop, setCrop] = useState<Crop>();
@@ -45,6 +50,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     const [isDrawing, setIsDrawing] = useState(false);
     const [color, setColor] = useState('#ff0000');
     const [lineWidth, setLineWidth] = useState(4);
+
+    // Background State
+    const [bgTool, setBgTool] = useState<'magic' | null>(null);
+    const [tolerance, setTolerance] = useState(30);
 
     // Initialize resize dims when image loads
     const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -196,7 +205,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     // --- Annotate Logic ---
     // Initialize canvas for annotation when mode starts
     useEffect(() => {
-        if (mode === 'ANNOTATE' && canvasRef.current && imgRef.current) {
+        if ((mode === 'ANNOTATE' || (mode === 'BACKGROUND' && bgTool === 'magic')) && canvasRef.current && imgRef.current) {
             const canvas = canvasRef.current;
             canvas.width = imgRef.current.width;
             canvas.height = imgRef.current.height;
@@ -210,7 +219,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                 ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
             }
         }
-    }, [mode, currentSrc]); // Re-run if mode or src changes
+    }, [mode, currentSrc, bgTool]); // Re-run if mode or src changes
 
     // Update context style when color/width changes
     useEffect(() => {
@@ -224,6 +233,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     }, [color, lineWidth, mode]);
 
     const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (mode === 'BACKGROUND' && bgTool === 'magic') {
+            handleMagicWand(e);
+            return;
+        }
+
         setIsDrawing(true);
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -236,6 +250,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     };
 
     const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (mode === 'BACKGROUND') return;
         if (!isDrawing) return;
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -257,6 +272,49 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
             setMode(null);
         }
     };
+
+    // --- Background Removal Logic ---
+    const handleAutoRemoveBg = async () => {
+        if (!currentSrc) return;
+        setIsLoading(true);
+        try {
+            const newSrc = await removeBackgroundAuto(currentSrc);
+            pushToHistory(newSrc);
+            setMode(null);
+        } catch (error) {
+            console.error("Auto remove failed", error);
+            alert("Failed to remove background automatically.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleMagicWand = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor(e.clientX - rect.left);
+        const y = Math.floor(e.clientY - rect.top);
+
+        floodFill(ctx, x, y, tolerance);
+
+        // We don't push to history immediately on every click to allow multiple clicks?
+        // Or maybe we do? Let's do it for simplicity for now, or maybe just update the canvas and have an "Apply" button?
+        // The current structure for Annotate uses an "Apply" button. Let's stick to that pattern.
+        // Actually, floodFill modifies the canvas in place.
+    };
+
+    const applyBackgroundChanges = () => {
+        if (canvasRef.current) {
+            pushToHistory(canvasRef.current.toDataURL('image/png'));
+            setMode(null);
+            setBgTool(null);
+        }
+    };
+
 
     return (
         <div className="flex flex-col h-full w-full bg-slate-950">
@@ -288,6 +346,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                         >
                             <Pen className="w-5 h-5" />
                         </button>
+                        <button
+                            onClick={() => setMode(mode === 'BACKGROUND' ? null : 'BACKGROUND')}
+                            className={`p-2 rounded-lg transition-colors ${mode === 'BACKGROUND' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                            title="Background Removal"
+                        >
+                            <Eraser className="w-5 h-5" />
+                        </button>
 
                         <div className="h-6 w-px bg-slate-700 mx-2"></div>
 
@@ -318,7 +383,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                 <div className="flex items-center gap-3">
                     <button
                         onClick={handleUndo}
-                        disabled={currentStep === 0}
+                        disabled={currentStep === 0 || isLoading}
                         className={`p-2 rounded-lg transition-colors flex items-center gap-2 ${currentStep === 0 ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`}
                         title="Undo"
                     >
@@ -335,7 +400,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                     </button>
                     <button
                         onClick={() => onSave(currentSrc)}
-                        className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-medium transition-colors"
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Save className="w-4 h-4" />
                         Done
@@ -344,7 +410,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
             </div>
 
             {/* Main Area */}
-            <div className="flex-1 overflow-auto p-8 flex items-center justify-center relative bg-black/50">
+            <div className="flex-1 overflow-auto p-8 flex items-center justify-center relative bg-[url('https://media.istockphoto.com/id/1133442802/vector/checkered-geometric-vector-background-with-black-and-gray-tile-transparent-grid-empty.jpg?s=612x612&w=0&k=20&c=6s3f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7')] bg-repeat">
+                {/* Checkered background for transparency visibility */}
+                <div className="absolute inset-0 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAMUlEQVQ4T2NkYGAQYcAP3uCTZhw1gGGYhAGBZIA/nYDCgBDAm9BGDWAAJyRCgLaBCAAgXwixzAS0pgAAAABJRU5ErkJggg==')] opacity-20 pointer-events-none"></div>
+
+                {isLoading && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+                        <div className="flex flex-col items-center gap-4">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500"></div>
+                            <p className="text-cyan-400 font-medium animate-pulse">Removing Background...</p>
+                        </div>
+                    </div>
+                )}
 
                 {/* Mode Specific Controls Overlay */}
                 {mode === 'RESIZE' && (
@@ -423,6 +500,46 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                     </div>
                 )}
 
+                {mode === 'BACKGROUND' && (
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-2 rounded-xl shadow-xl flex items-center gap-3">
+                        <button
+                            onClick={handleAutoRemoveBg}
+                            className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-500 hover:to-pink-500 transition-all"
+                        >
+                            <Sparkles className="w-4 h-4" />
+                            Auto AI
+                        </button>
+
+                        <div className="h-6 w-px bg-slate-700"></div>
+
+                        <button
+                            onClick={() => setBgTool(bgTool === 'magic' ? null : 'magic')}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${bgTool === 'magic' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'}`}
+                        >
+                            <Wand2 className="w-4 h-4" />
+                            Magic Wand
+                        </button>
+
+                        {bgTool === 'magic' && (
+                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2">
+                                <span className="text-xs text-slate-400">Tol:</span>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={tolerance}
+                                    onChange={(e) => setTolerance(parseInt(e.target.value))}
+                                    className="w-20"
+                                    title={`Tolerance: ${tolerance}`}
+                                />
+                                <button onClick={applyBackgroundChanges} className="p-2 bg-cyan-600 rounded-lg text-white hover:bg-cyan-500 ml-2">
+                                    <Check className="w-4 h-4" />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {mode === 'CROP' && (
                     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-2 rounded-xl shadow-xl flex flex-col gap-2">
                         <div className="flex items-center gap-2">
@@ -447,7 +564,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                         <ReactCrop crop={crop} onChange={c => setCrop(c)} onComplete={c => setCompletedCrop(c)}>
                             <img ref={imgRef} src={currentSrc} onLoad={onImageLoad} alt="Edit" className="max-h-[70vh] max-w-full object-contain" />
                         </ReactCrop>
-                    ) : mode === 'ANNOTATE' ? (
+                    ) : (mode === 'ANNOTATE' || (mode === 'BACKGROUND' && bgTool === 'magic')) ? (
                         <>
                             {/* Hidden img to maintain size reference if needed, but we draw on canvas */}
                             <img ref={imgRef} src={currentSrc} className="hidden" onLoad={onImageLoad} alt="Ref" />
@@ -457,7 +574,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                                 onMouseMove={draw}
                                 onMouseUp={stopDrawing}
                                 onMouseLeave={stopDrawing}
-                                className="max-h-[70vh] max-w-full object-contain cursor-crosshair"
+                                className={`max-h-[70vh] max-w-full object-contain ${bgTool === 'magic' ? 'cursor-crosshair' : 'cursor-crosshair'}`}
                             />
                         </>
                     ) : (
