@@ -3,6 +3,9 @@ import { env, SamModel, AutoProcessor, RawImage, Tensor } from '@xenova/transfor
 // Skip local model check
 env.allowLocalModels = false;
 
+// Use HuggingFace mirror for better accessibility
+env.remoteHost = 'https://hf-mirror.com';
+
 export const SAM_MODELS = {
     FAST: 'Xenova/slimsam-77-uniform',
     HIGH_QUALITY: 'Xenova/sam-vit-b'
@@ -15,6 +18,7 @@ interface SAMState {
     imageInputs: any;
     rawImage: any;
     currentModelId: string | null;
+    isInitializing: boolean;
 }
 
 let samState: SAMState = {
@@ -23,7 +27,8 @@ let samState: SAMState = {
     imageEmbeddings: null,
     imageInputs: null,
     rawImage: null,
-    currentModelId: null
+    currentModelId: null,
+    isInitializing: false
 };
 
 export const loadSAMModel = async (modelId: string, onProgress?: (progress: number) => void) => {
@@ -32,12 +37,18 @@ export const loadSAMModel = async (modelId: string, onProgress?: (progress: numb
         return;
     }
 
+    // Prevent concurrent initialization
+    if (samState.isInitializing) {
+        throw new Error('Model is already being initialized');
+    }
+
     // Reset state if switching models
     samState.model = null;
     samState.processor = null;
     samState.imageEmbeddings = null;
     samState.imageInputs = null;
     samState.currentModelId = null;
+    samState.isInitializing = true;
 
     console.log(`Loading SAM Model: ${modelId}`, env);
 
@@ -55,7 +66,10 @@ export const loadSAMModel = async (modelId: string, onProgress?: (progress: numb
         samState.currentModelId = modelId;
     } catch (err) {
         console.error("Failed to load SAM model", err);
+        samState.isInitializing = false;
         throw err;
+    } finally {
+        samState.isInitializing = false;
     }
 };
 

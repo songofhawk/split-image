@@ -68,6 +68,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
     const [samPoints, setSamPoints] = useState<{ x: number, y: number, label: number }[]>([]);
     const [samMask, setSamMask] = useState<{ data: Float32Array | any, width: number, height: number } | null>(null);
     const [isSamReady, setIsSamReady] = useState(false);
+    const [isSamInitializing, setIsSamInitializing] = useState(false);
     const [samModel, setSamModel] = useState<'FAST' | 'HIGH_QUALITY'>('FAST');
 
     // Zoom & Pan State
@@ -411,7 +412,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
 
     // --- Segment Anything Logic ---
     const initSam = async () => {
-        if (isSamReady) return;
+        // Prevent duplicate initialization
+        if (isSamReady || isSamInitializing) {
+            console.log('SAM already ready or initializing, skipping...');
+            return;
+        }
+
+        setIsSamInitializing(true);
         setIsLoading(true);
         setLoadingText("Loading AI Model (this may take a while)...");
         try {
@@ -429,11 +436,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
             setIsSamReady(true);
         } catch (error) {
             console.error("SAM Init failed", error);
-            alert("Failed to initialize Segment Anything.");
+            alert(`初始化失败: ${error instanceof Error ? error.message : '未知错误'}`);
             setMode(null);
         } finally {
             setIsLoading(false);
             setLoadingText(null);
+            setIsSamInitializing(false);
         }
     };
 
@@ -537,10 +545,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
 
     // Trigger SAM init when entering mode
     useEffect(() => {
-        if (mode === 'SEGMENT') {
+        if (mode === 'SEGMENT' && !isSamReady && !isSamInitializing) {
             initSam();
         }
-    }, [mode]);
+    }, [mode, isSamReady, isSamInitializing]);
 
     // --- Zoom / Pan Logic ---
     const handleWheel = (e: React.WheelEvent) => {
@@ -1006,7 +1014,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                                 src={currentSrc}
                                 onLoad={onImageLoad}
                                 alt="Edit"
-                                className={`max-h-none max-w-none ${['ANNOTATE', 'PIXEL_EDIT', 'SEGMENT', 'BACKGROUND'].includes(mode || '') ? 'pointer-events-none opacity-0 absolute' : ''}`}
+                                className={`max-h-none max-w-none ${mode === 'ANNOTATE' ||
+                                        mode === 'PIXEL_EDIT' ||
+                                        mode === 'SEGMENT' ||
+                                        (mode === 'BACKGROUND' && bgTool !== null)
+                                        ? 'pointer-events-none opacity-0 absolute'
+                                        : ''
+                                    }`}
                             />
                             {/* Show Canvas if IN a drawing mode */}
                             <canvas
@@ -1015,7 +1029,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                                 onMouseMove={draw}
                                 onMouseUp={stopDrawing}
                                 onMouseLeave={stopDrawing}
-                                className={`max-h-none max-w-none ${['ANNOTATE', 'PIXEL_EDIT', 'SEGMENT', 'BACKGROUND'].includes(mode || '') ? '' : 'hidden'}`}
+                                className={`max-h-none max-w-none ${mode === 'ANNOTATE' ||
+                                        mode === 'PIXEL_EDIT' ||
+                                        mode === 'SEGMENT' ||
+                                        (mode === 'BACKGROUND' && bgTool !== null)
+                                        ? ''
+                                        : 'hidden'
+                                    }`}
                             />
                         </>
                     )}
