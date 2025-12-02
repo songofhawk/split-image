@@ -21,7 +21,6 @@ const App: React.FC = () => {
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Helper to load image dimensions
   const loadImage = (file: File) => {
     setLoadingMessage("Reading image file...");
     setState(AppState.PROCESSING);
@@ -37,8 +36,9 @@ const App: React.FC = () => {
       img.onload = () => {
         setImageDimensions({ width: img.width, height: img.height });
         setOriginalImageSrc(img.src);
-        // Initial process
-        processImage(img.src, img.width, img.height);
+        // Go directly to Image Editor
+        setState(AppState.IMAGE_EDIT);
+        setLoadingMessage(null);
       };
       img.onerror = () => {
         setErrorMsg("Failed to load image.");
@@ -148,19 +148,34 @@ const App: React.FC = () => {
     setState(AppState.IMAGE_EDIT);
   };
 
-  const handleImageSave = (newSrc: string) => {
+  // Called when user clicks "Done" or "Split" in ImageEditor
+  const handleImageEditorSave = (newSrc: string, action: 'save' | 'split') => {
+    // Update the source with the edited version
+    setOriginalImageSrc(newSrc);
+
+    // Update dimensions
     const img = new Image();
     img.onload = () => {
       setImageDimensions({ width: img.width, height: img.height });
-      setOriginalImageSrc(newSrc);
-      // Re-run detection on the new image
-      processImage(newSrc, img.width, img.height);
+
+      if (action === 'split') {
+        // Run detection and go to Split Editor
+        processImage(newSrc, img.width, img.height);
+      } else {
+        // Just save? For now, maybe just stay or go to split? 
+        // The prompt implies "Split" is a feature. 
+        // If they just "Save", maybe they want to download?
+        // For now, let's assume "Done" means "Ready to Split" or "Download".
+        // But the user request says "Split as a feature".
+        // Let's treat "Done" as "Go to Split" for now, or maybe we need a separate download?
+        // I'll assume the ImageEditor has a specific "Split" button.
+      }
     };
     img.src = newSrc;
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col">
+    <div className="h-screen overflow-hidden bg-slate-950 text-slate-200 flex flex-col">
       {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -226,8 +241,9 @@ const App: React.FC = () => {
             <div className="w-full h-full animate-in fade-in duration-300">
               <ImageEditor
                 imageSrc={originalImageSrc}
-                onSave={handleImageSave}
-                onCancel={() => setState(AppState.EDITOR)}
+                onSave={(src) => handleImageEditorSave(src, 'save')}
+                onSplit={(src) => handleImageEditorSave(src, 'split')}
+                onCancel={handleReset}
               />
             </div>
           )}

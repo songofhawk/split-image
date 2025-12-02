@@ -15,7 +15,12 @@ import {
     Eraser,
     Wand2,
     Sparkles,
-    Scan
+    Scan,
+    ZoomIn,
+    ZoomOut,
+    MousePointer2,
+    Scissors,
+    Hand
 } from 'lucide-react';
 import { floodFill, removeBackgroundAuto, filterLargestComponent } from '../services/imageProcessing';
 import { loadSAMModel, computeEmbeddings, generateMask, SAM_MODELS } from '../services/samService';
@@ -23,12 +28,13 @@ import { loadSAMModel, computeEmbeddings, generateMask, SAM_MODELS } from '../se
 interface ImageEditorProps {
     imageSrc: string;
     onSave: (newSrc: string) => void;
+    onSplit: (newSrc: string) => void;
     onCancel: () => void;
 }
 
-type EditMode = 'CROP' | 'RESIZE' | 'ANNOTATE' | 'BACKGROUND' | 'SEGMENT' | null;
+type EditMode = 'CROP' | 'RESIZE' | 'ANNOTATE' | 'BACKGROUND' | 'SEGMENT' | 'PIXEL_EDIT' | null;
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCancel }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSplit, onCancel }) => {
     // History Stack
     const [history, setHistory] = useState<string[]>([imageSrc]);
     const [currentStep, setCurrentStep] = useState(0);
@@ -64,6 +70,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     const [isSamReady, setIsSamReady] = useState(false);
     const [samModel, setSamModel] = useState<'FAST' | 'HIGH_QUALITY'>('FAST');
 
+    // Zoom & Pan State
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
+    const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+
+    // Pixel Edit State
+    const [pixelBrushSize, setPixelBrushSize] = useState(10);
+    const [isErasingPixel, setIsErasingPixel] = useState(false);
+    const [pixelMode, setPixelMode] = useState<'ERASE' | 'RESTORE'>('ERASE');
+
     // Initialize resize dims when image loads
     const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
         const { width, height } = e.currentTarget;
@@ -74,6 +91,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
         setSamPoints([]);
         setSamMask(null);
         setIsSamReady(false);
+
+        // Only reset zoom if history is at start (new image loaded)
+        if (history.length === 1) {
+            setZoom(1);
+            setPan({ x: 0, y: 0 });
+        }
     };
 
     // --- History Helper ---
@@ -221,7 +244,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
     // --- Annotate Logic ---
     // Initialize canvas for annotation when mode starts
     useEffect(() => {
-        if ((mode === 'ANNOTATE' || (mode === 'BACKGROUND' && bgTool === 'magic') || mode === 'SEGMENT') && canvasRef.current && imgRef.current) {
+        if ((mode === 'ANNOTATE' || (mode === 'BACKGROUND' && bgTool === 'magic') || mode === 'SEGMENT' || mode === 'PIXEL_EDIT') && canvasRef.current && imgRef.current) {
             const canvas = canvasRef.current;
             canvas.width = imgRef.current.width;
             canvas.height = imgRef.current.height;
@@ -237,6 +260,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                     ctx.lineWidth = lineWidth;
                     ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
                 } else if (mode === 'BACKGROUND' && bgTool === 'magic') {
+                    ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
+                } else if (mode === 'PIXEL_EDIT') {
                     ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
                 } else if (mode === 'SEGMENT') {
                     // For segment, we draw the image, then points, then mask
@@ -296,6 +321,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
             handleSamClick(e);
             return;
         }
+        if (mode === 'PIXEL_EDIT') {
+            setIsErasingPixel(true);
+            handlePixelEraser(e);
+            return;
+        }
 
         setIsDrawing(true);
         const canvas = canvasRef.current;
@@ -310,6 +340,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
 
     const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (mode === 'BACKGROUND' || mode === 'SEGMENT') return;
+        if (mode === 'PIXEL_EDIT') {
+            if (isErasingPixel) handlePixelEraser(e);
+            return;
+        }
         if (!isDrawing) return;
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -323,6 +357,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
 
     const stopDrawing = () => {
         setIsDrawing(false);
+        setIsErasingPixel(false);
+        if (mode === 'PIXEL_EDIT') {
+            applyAnnotation(); // Save state on mouse up for pixel edit
+        }
     };
 
     const applyAnnotation = () => {
@@ -504,16 +542,100 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
         }
     }, [mode]);
 
+    // --- Zoom / Pan Logic ---
+    const handleWheel = (e: React.WheelEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+            // Zoom to mouse
+            const rect = e.currentTarget.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left - rect.width / 2; // Relative to center
+            const mouseY = e.clientY - rect.top - rect.height / 2;
+
+            const delta = -e.deltaY;
+            const scaleAmount = 0.1;
+            const newZoom = Math.max(0.1, Math.min(10, zoom + (delta > 0 ? scaleAmount : -scaleAmount)));
+
+            // Adjust pan to keep mouse point stationary relative to image
+            // P_new = P_old + (Mouse - P_old) * (1 - Z_new/Z_old) ? 
+            // Simpler: The shift in world space is (ZoomDiff * MouseOffset).
+            // Since we scale from center, the mouse position moves away from center by factor.
+            // We need to move it back.
+
+            const scaleFactor = newZoom / zoom;
+            const newPanX = pan.x + (mouseX - pan.x) * (1 - scaleFactor);
+            const newPanY = pan.y + (mouseY - pan.y) * (1 - scaleFactor);
+
+            setZoom(newZoom);
+            setPan({ x: newPanX, y: newPanY });
+        } else {
+            // Pan
+            setPan(p => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+        }
+    };
+
+    const handleMouseDownPan = (e: React.MouseEvent) => {
+        if (e.button === 1 || (e.button === 0 && e.altKey)) { // Middle click or Alt+Click
+            setIsPanning(true);
+            setLastMousePos({ x: e.clientX, y: e.clientY });
+            e.preventDefault();
+        }
+    };
+
+    const handleMouseMovePan = (e: React.MouseEvent) => {
+        if (isPanning) {
+            const dx = e.clientX - lastMousePos.x;
+            const dy = e.clientY - lastMousePos.y;
+            setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+            setLastMousePos({ x: e.clientX, y: e.clientY });
+        }
+    };
+
+    const handleMouseUpPan = () => {
+        setIsPanning(false);
+    };
+
+    // --- Pixel Eraser Logic ---
+    const handlePixelEraser = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        const canvas = canvasRef.current;
+        if (!canvas || !imgRef.current) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        const rect = canvas.getBoundingClientRect();
+
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+
+        ctx.save();
+        if (pixelMode === 'ERASE') {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.beginPath();
+            ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            // Restore: Draw the original image back onto the canvas at this spot
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.beginPath();
+            ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
+            ctx.clip(); // Restrict drawing to the brush circle
+            ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
+        }
+        ctx.restore();
+    };
+
 
     return (
         <div className="flex flex-col h-full w-full bg-slate-950">
             {/* Toolbar */}
             <div className="h-16 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between px-4">
                 <div className="flex items-center gap-4">
-                    <h2 className="text-xl font-bold text-white">Edit Image</h2>
+                    <h2 className="text-xl font-bold text-white">Edit</h2>
                     <div className="h-6 w-px bg-slate-700"></div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-1">
+                        {/* Basic Tools */}
                         <button
                             onClick={() => setMode(mode === 'CROP' ? null : 'CROP')}
                             className={`p-2 rounded-lg transition-colors ${mode === 'CROP' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
@@ -528,12 +650,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                         >
                             <Maximize className="w-5 h-5" />
                         </button>
+
+                        <div className="h-6 w-px bg-slate-700 mx-2 self-center"></div>
+
+                        {/* Drawing / Erasing */}
                         <button
                             onClick={() => setMode(mode === 'ANNOTATE' ? null : 'ANNOTATE')}
                             className={`p-2 rounded-lg transition-colors ${mode === 'ANNOTATE' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-                            title="Annotate"
+                            title="Draw"
                         >
                             <Pen className="w-5 h-5" />
+                        </button>
+                        <button
+                            onClick={() => setMode(mode === 'PIXEL_EDIT' ? null : 'PIXEL_EDIT')}
+                            className={`p-2 rounded-lg transition-colors ${mode === 'PIXEL_EDIT' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                            title="Pixel Eraser"
+                        >
+                            <MousePointer2 className="w-5 h-5" />
                         </button>
                         <button
                             onClick={() => setMode(mode === 'BACKGROUND' ? null : 'BACKGROUND')}
@@ -542,6 +675,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                         >
                             <Eraser className="w-5 h-5" />
                         </button>
+
+                        <div className="h-6 w-px bg-slate-700 mx-2 self-center"></div>
+
+                        {/* AI Tools */}
                         <button
                             onClick={() => setMode(mode === 'SEGMENT' ? null : 'SEGMENT')}
                             className={`p-2 rounded-lg transition-colors ${mode === 'SEGMENT' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
@@ -550,8 +687,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                             <Scan className="w-5 h-5" />
                         </button>
 
-                        <div className="h-6 w-px bg-slate-700 mx-2"></div>
+                        <div className="h-6 w-px bg-slate-700 mx-2 self-center"></div>
 
+                        {/* Transform */}
                         <button
                             onClick={rotateImage}
                             className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
@@ -566,13 +704,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                         >
                             <FlipHorizontal className="w-5 h-5" />
                         </button>
-                        <button
-                            onClick={() => flipImage('vertical')}
-                            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                            title="Flip Vertical"
-                        >
-                            <FlipVertical className="w-5 h-5" />
-                        </button>
                     </div>
                 </div>
 
@@ -584,76 +715,62 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                         title="Undo"
                     >
                         <Undo2 className="w-5 h-5" />
-                        <span className="text-sm">Undo</span>
                     </button>
+
                     <div className="h-6 w-px bg-slate-700 mx-2"></div>
 
                     <button
-                        onClick={onCancel}
-                        className="px-4 py-2 text-slate-300 hover:text-white font-medium"
+                        onClick={() => onSplit(currentSrc)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-cyan-900/20"
                     >
-                        Cancel
+                        <Scissors className="w-4 h-4" />
+                        Split
                     </button>
+
                     <button
                         onClick={() => onSave(currentSrc)}
                         disabled={isLoading}
-                        className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium transition-colors"
                     >
                         <Save className="w-4 h-4" />
-                        Done
+                        Save
                     </button>
                 </div>
             </div>
 
-            {/* Main Area */}
-            <div className="flex-1 overflow-auto p-8 flex items-center justify-center relative bg-slate-900">
-                {/* Checkered background for transparency visibility */}
-                <div className="absolute inset-0 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAMUlEQVQ4T2NkYGAQYcAP3uCTZhw1gGGYhAGBZIA/nYDCgBDAm9BGDWAAJyRCgLaBCAAgXwixzAS0pgAAAABJRU5ErkJggg==')] opacity-20 pointer-events-none"></div>
-
-                {isLoading && (
-                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-                        <div className="flex flex-col items-center gap-4">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500"></div>
-                            <p className="text-cyan-400 font-medium animate-pulse">{loadingText || "Processing..."}</p>
-                        </div>
-                    </div>
-                )}
-
-                {/* Mode Specific Controls Overlay */}
+            {/* Options Bar - Dedicated space for tool options to prevent occlusion */}
+            <div className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-center px-4 relative z-40">
                 {mode === 'RESIZE' && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-4 rounded-xl shadow-xl flex flex-col gap-4">
-                        <div className="flex items-center gap-4">
-                            <div className="flex flex-col gap-1">
-                                <label className="text-xs text-slate-400">Width</label>
-                                <input
-                                    type="number"
-                                    value={resizeDims.width}
-                                    onChange={(e) => handleResizeChange(e, 'width')}
-                                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white w-24"
-                                />
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <label className="text-xs text-slate-400">Height</label>
-                                <input
-                                    type="number"
-                                    value={resizeDims.height}
-                                    onChange={(e) => handleResizeChange(e, 'height')}
-                                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white w-24"
-                                />
-                            </div>
-                            <div className="flex items-center gap-2 pt-4">
-                                <input
-                                    type="checkbox"
-                                    checked={maintainAspect}
-                                    onChange={(e) => setMaintainAspect(e.target.checked)}
-                                    id="aspect"
-                                />
-                                <label htmlFor="aspect" className="text-sm text-slate-300">Lock Ratio</label>
-                            </div>
+                    <div className="flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-200">
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-400">Width</label>
+                            <input
+                                type="number"
+                                value={resizeDims.width}
+                                onChange={(e) => handleResizeChange(e, 'width')}
+                                className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white w-20 text-xs"
+                            />
                         </div>
-
-                        {/* Presets */}
-                        <div className="flex gap-2 justify-center border-t border-slate-800 pt-3">
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-400">Height</label>
+                            <input
+                                type="number"
+                                value={resizeDims.height}
+                                onChange={(e) => handleResizeChange(e, 'height')}
+                                className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white w-20 text-xs"
+                            />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={maintainAspect}
+                                onChange={(e) => setMaintainAspect(e.target.checked)}
+                                id="aspect"
+                            />
+                            <label htmlFor="aspect" className="text-xs text-slate-300">Lock Ratio</label>
+                        </div>
+                        <div className="h-4 w-px bg-slate-700 mx-2"></div>
+                        <div className="flex gap-1">
                             {[25, 50, 75, 100].map(pct => (
                                 <button
                                     key={pct}
@@ -664,55 +781,90 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                                 </button>
                             ))}
                         </div>
-
-                        <div className="w-full">
-                            <button onClick={applyResize} className="w-full p-2 bg-cyan-600 rounded-lg text-white hover:bg-cyan-500 flex justify-center items-center gap-2">
-                                <Check className="w-4 h-4" /> Apply Resize
-                            </button>
-                        </div>
+                        <div className="h-4 w-px bg-slate-700 mx-2"></div>
+                        <button onClick={applyResize} className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 text-xs flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Apply
+                        </button>
                     </div>
                 )}
 
                 {mode === 'ANNOTATE' && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-2 rounded-xl shadow-xl flex items-center gap-2">
+                    <div className="flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-200">
                         <input
                             type="color"
                             value={color}
                             onChange={(e) => setColor(e.target.value)}
-                            className="w-8 h-8 rounded cursor-pointer bg-transparent border-none"
+                            className="w-6 h-6 rounded cursor-pointer bg-transparent border-none"
                         />
-                        <input
-                            type="range"
-                            min="1"
-                            max="20"
-                            value={lineWidth}
-                            onChange={(e) => setLineWidth(parseInt(e.target.value))}
-                            className="w-24"
-                        />
-                        <div className="h-6 w-px bg-slate-700 mx-2"></div>
-                        <button onClick={applyAnnotation} className="p-2 bg-cyan-600 rounded-lg text-white hover:bg-cyan-500">
-                            <Check className="w-4 h-4" />
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400">Size:</span>
+                            <input
+                                type="range"
+                                min="1"
+                                max="20"
+                                value={lineWidth}
+                                onChange={(e) => setLineWidth(parseInt(e.target.value))}
+                                className="w-24"
+                            />
+                        </div>
+                        <div className="h-4 w-px bg-slate-700 mx-2"></div>
+                        <button onClick={applyAnnotation} className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 text-xs flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Apply
+                        </button>
+                    </div>
+                )}
+
+                {mode === 'PIXEL_EDIT' && (
+                    <div className="flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-200">
+                        <div className="flex bg-slate-800 rounded p-0.5 gap-1">
+                            <button
+                                onClick={() => setPixelMode('ERASE')}
+                                className={`px-3 py-1 text-xs rounded ${pixelMode === 'ERASE' ? 'bg-red-500/20 text-red-400' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                Erase
+                            </button>
+                            <button
+                                onClick={() => setPixelMode('RESTORE')}
+                                className={`px-3 py-1 text-xs rounded ${pixelMode === 'RESTORE' ? 'bg-green-500/20 text-green-400' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                Restore
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400">Size:</span>
+                            <input
+                                type="range"
+                                min="1"
+                                max="50"
+                                value={pixelBrushSize}
+                                onChange={(e) => setPixelBrushSize(parseInt(e.target.value))}
+                                className="w-24"
+                            />
+                        </div>
+                        <div className="h-4 w-px bg-slate-700 mx-2"></div>
+                        <button onClick={applyAnnotation} className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 text-xs flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Apply
                         </button>
                     </div>
                 )}
 
                 {mode === 'BACKGROUND' && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-2 rounded-xl shadow-xl flex items-center gap-3">
+                    <div className="flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-200">
                         <button
                             onClick={handleAutoRemoveBg}
-                            className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-500 hover:to-pink-500 transition-all"
+                            className="flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded hover:from-purple-500 hover:to-pink-500 text-xs"
                         >
-                            <Sparkles className="w-4 h-4" />
+                            <Sparkles className="w-3 h-3" />
                             Auto AI
                         </button>
 
-                        <div className="h-6 w-px bg-slate-700"></div>
+                        <div className="h-4 w-px bg-slate-700"></div>
 
                         <button
                             onClick={() => setBgTool(bgTool === 'magic' ? null : 'magic')}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${bgTool === 'magic' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'}`}
+                            className={`flex items-center gap-2 px-3 py-1 rounded transition-colors text-xs ${bgTool === 'magic' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'}`}
                         >
-                            <Wand2 className="w-4 h-4" />
+                            <Wand2 className="w-3 h-3" />
                             Magic Wand
                         </button>
 
@@ -728,8 +880,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                                     className="w-20"
                                     title={`Tolerance: ${tolerance}`}
                                 />
-                                <button onClick={applyBackgroundChanges} className="p-2 bg-cyan-600 rounded-lg text-white hover:bg-cyan-500 ml-2">
-                                    <Check className="w-4 h-4" />
+                                <button onClick={applyBackgroundChanges} className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 text-xs flex items-center gap-1 ml-2">
+                                    <Check className="w-3 h-3" /> Apply
                                 </button>
                             </div>
                         )}
@@ -737,7 +889,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                 )}
 
                 {mode === 'SEGMENT' && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-2 rounded-xl shadow-xl flex items-center gap-3">
+                    <div className="flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-200">
                         <select
                             value={samModel}
                             onChange={(e) => setSamModel(e.target.value as 'FAST' | 'HIGH_QUALITY')}
@@ -748,72 +900,124 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCa
                             <option value="HIGH_QUALITY">High Quality (ViT-B)</option>
                         </select>
 
-                        <div className="h-6 w-px bg-slate-700"></div>
+                        <div className="h-4 w-px bg-slate-700"></div>
 
-                        <span className="text-sm text-slate-300 px-2">Click object (Shift+Click to exclude)</span>
+                        <span className="text-xs text-slate-300">Click object (Shift+Click exclude)</span>
 
-                        <div className="h-6 w-px bg-slate-700"></div>
+                        <div className="h-4 w-px bg-slate-700"></div>
 
                         <button
                             onClick={handleGenerateMask}
                             disabled={samPoints.length === 0}
-                            className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex items-center gap-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs"
                         >
-                            <Sparkles className="w-4 h-4" />
+                            <Sparkles className="w-3 h-3" />
                             Generate Mask
                         </button>
 
-                        <div className="h-6 w-px bg-slate-700"></div>
+                        <div className="h-4 w-px bg-slate-700"></div>
 
                         <button
                             onClick={applySamMask}
                             disabled={!samMask}
-                            className="p-2 bg-cyan-600 rounded-lg text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-xs flex items-center gap-1"
                         >
-                            <Check className="w-4 h-4" />
+                            <Check className="w-3 h-3" /> Apply
                         </button>
                     </div>
                 )}
 
                 {mode === 'CROP' && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-700 p-2 rounded-xl shadow-xl flex flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm text-slate-300 px-2">Drag to crop</span>
-                            <button onClick={applyCrop} className="p-2 bg-cyan-600 rounded-lg text-white hover:bg-cyan-500">
-                                <Check className="w-4 h-4" />
-                            </button>
-                        </div>
-                        {/* Aspect Ratio Presets */}
-                        <div className="flex gap-1 border-t border-slate-800 pt-2">
+                    <div className="flex items-center gap-4 animate-in slide-in-from-top-2 fade-in duration-200">
+                        <span className="text-xs text-slate-300">Drag to crop</span>
+                        <div className="h-4 w-px bg-slate-700"></div>
+                        <div className="flex gap-1">
                             <button onClick={() => setAspectCrop(undefined)} className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded">Free</button>
                             <button onClick={() => setAspectCrop(1)} className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded">1:1</button>
                             <button onClick={() => setAspectCrop(4 / 3)} className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded">4:3</button>
                             <button onClick={() => setAspectCrop(16 / 9)} className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded">16:9</button>
                         </div>
+                        <div className="h-4 w-px bg-slate-700 mx-2"></div>
+                        <button onClick={applyCrop} className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 text-xs flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Apply
+                        </button>
                     </div>
                 )}
 
+                {!mode && (
+                    <span className="text-xs text-slate-500">Select a tool to start editing</span>
+                )}
+            </div>
+
+            {/* Main Area */}
+            <div
+                className="flex-1 overflow-hidden p-8 relative bg-slate-900 cursor-move flex items-center justify-center"
+                onWheel={handleWheel}
+                onMouseDown={handleMouseDownPan}
+                onMouseMove={handleMouseMovePan}
+                onMouseUp={handleMouseUpPan}
+                onMouseLeave={handleMouseUpPan}
+            >
+                {/* Zoom Controls */}
+                <div className="absolute bottom-4 right-4 z-50 flex flex-col gap-2 bg-slate-800/80 backdrop-blur p-2 rounded-lg border border-slate-700">
+                    <button onClick={() => setZoom(z => Math.min(10, z + 0.1))} className="p-2 hover:bg-slate-700 rounded text-slate-300">
+                        <ZoomIn className="w-5 h-5" />
+                    </button>
+                    <span className="text-xs text-center text-slate-400">{Math.round(zoom * 100)}%</span>
+                    <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="p-2 hover:bg-slate-700 rounded text-slate-300">
+                        <ZoomOut className="w-5 h-5" />
+                    </button>
+                    <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="p-2 hover:bg-slate-700 rounded text-slate-300 border-t border-slate-700 mt-1">
+                        <Scan className="w-4 h-4" />
+                    </button>
+                </div>
+
+                {/* Checkered background for transparency visibility - Fixed to viewport */}
+                <div className="absolute inset-0 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAMUlEQVQ4T2NkYGAQYcAP3uCTZhw1gGGYhAGBZIA/nYDCgBDAm9BGDWAAJyRCgLaBCAAgXwixzAS0pgAAAABJRU5ErkJggg==')] opacity-20 pointer-events-none"></div>
+
+                {isLoading && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+                        <div className="flex flex-col items-center gap-4">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500"></div>
+                            <p className="text-cyan-400 font-medium animate-pulse">{loadingText || "Processing..."}</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* REMOVED FLOATING TOOLBARS - Moved to Options Bar */}
+
                 {/* Image / Canvas Display */}
-                <div className="relative shadow-2xl">
+                <div
+                    className="relative shadow-2xl transition-transform duration-75 ease-out origin-center"
+                    style={{
+                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        cursor: isPanning ? 'grabbing' : (mode === 'PIXEL_EDIT' ? 'crosshair' : 'default')
+                    }}
+                >
                     {mode === 'CROP' ? (
                         <ReactCrop crop={crop} onChange={c => setCrop(c)} onComplete={c => setCompletedCrop(c)}>
-                            <img ref={imgRef} src={currentSrc} onLoad={onImageLoad} alt="Edit" className="max-h-[70vh] max-w-full object-contain" />
+                            <img ref={imgRef} src={currentSrc} onLoad={onImageLoad} alt="Edit" className="max-h-none max-w-none" />
                         </ReactCrop>
-                    ) : (mode === 'ANNOTATE' || (mode === 'BACKGROUND' && bgTool === 'magic') || mode === 'SEGMENT') ? (
+                    ) : (
                         <>
-                            {/* Hidden img to maintain size reference if needed, but we draw on canvas */}
-                            <img ref={imgRef} src={currentSrc} className="hidden" onLoad={onImageLoad} alt="Ref" />
+                            {/* Show Image if NOT in a drawing mode */}
+                            <img
+                                ref={imgRef}
+                                src={currentSrc}
+                                onLoad={onImageLoad}
+                                alt="Edit"
+                                className={`max-h-none max-w-none ${['ANNOTATE', 'PIXEL_EDIT', 'SEGMENT', 'BACKGROUND'].includes(mode || '') ? 'pointer-events-none opacity-0 absolute' : ''}`}
+                            />
+                            {/* Show Canvas if IN a drawing mode */}
                             <canvas
                                 ref={canvasRef}
                                 onMouseDown={startDrawing}
                                 onMouseMove={draw}
                                 onMouseUp={stopDrawing}
                                 onMouseLeave={stopDrawing}
-                                className={`max-h-[70vh] max-w-full object-contain ${mode === 'SEGMENT' ? 'cursor-crosshair' : 'cursor-crosshair'}`}
+                                className={`max-h-none max-w-none ${['ANNOTATE', 'PIXEL_EDIT', 'SEGMENT', 'BACKGROUND'].includes(mode || '') ? '' : 'hidden'}`}
                             />
                         </>
-                    ) : (
-                        <img ref={imgRef} src={currentSrc} onLoad={onImageLoad} alt="Edit" className="max-h-[70vh] max-w-full object-contain" />
                     )}
                 </div>
             </div>
