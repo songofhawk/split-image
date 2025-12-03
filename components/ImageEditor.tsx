@@ -165,20 +165,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         const canvasX = unscaledOffsetX + imgCenterX;
         const canvasY = unscaledOffsetY + imgCenterY;
 
-        console.log('坐标转换调试:', {
-            client: { x: clientX, y: clientY },
-            mainRect: { left: mainRect.left, top: mainRect.top, width: mainRect.width, height: mainRect.height },
-            mouse: { x: mouseX, y: mouseY },
-            mainCenter: { x: mainCenterX, y: mainCenterY },
-            imgSize: { width: imgWidth, height: imgHeight },
-            imgCenter: { x: imgCenterX, y: imgCenterY },
-            offset: { x: offsetX, y: offsetY },
-            zoom,
-            pan,
-            unscaledOffset: { x: unscaledOffsetX, y: unscaledOffsetY },
-            result: { x: canvasX, y: canvasY }
-        });
-
         return { x: canvasX, y: canvasY };
     };
 
@@ -676,13 +662,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        const rect = canvas.getBoundingClientRect();
-
         // 获取canvas坐标（考虑zoom和pan）
         const coords = getCanvasCoordinates(e.clientX, e.clientY, canvas);
 
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+        // getCanvasCoordinates已经返回了相对于canvas的正确坐标
+        // 但canvas的width/height是实际像素，coords是相对于显示尺寸的
+        // 所以需要转换为实际像素坐标
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / imgRef.current.width;
+        const scaleY = canvas.height / imgRef.current.height;
 
         const x = coords.x * scaleX;
         const y = coords.y * scaleY;
