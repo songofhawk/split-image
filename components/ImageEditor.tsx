@@ -1055,7 +1055,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                 <div
                     className="transition-transform duration-75 ease-out"
                     style={{
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        // 裁剪模式下禁用transform，避免ReactCrop坐标问题
+                        transform: mode === 'CROP'
+                            ? 'none'
+                            : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                         transformOrigin: 'center center'
                     }}
                 >
