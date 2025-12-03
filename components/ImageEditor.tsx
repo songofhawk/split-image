@@ -117,6 +117,71 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         }
     };
 
+    // --- 坐标转换辅助函数 ---
+    // 将鼠标的屏幕坐标转换为canvas上的坐标，考虑zoom和pan的影响
+    const getCanvasCoordinates = (
+        clientX: number,
+        clientY: number,
+        element: HTMLElement
+    ): { x: number; y: number } => {
+        if (!imgRef.current) {
+            // 降级方案：直接使用元素坐标
+            const rect = element.getBoundingClientRect();
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        }
+
+        // 获取Main Area容器的rect（未受transform影响）
+        const mainArea = element.closest('.flex-1.overflow-hidden') as HTMLElement;
+        if (!mainArea) {
+            const rect = element.getBoundingClientRect();
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        }
+
+        const mainRect = mainArea.getBoundingClientRect();
+
+        // 鼠标相对于Main Area的位置
+        const mouseX = clientX - mainRect.left;
+        const mouseY = clientY - mainRect.top;
+
+        // Main Area的中心点
+        const mainCenterX = mainRect.width / 2;
+        const mainCenterY = mainRect.height / 2;
+
+        // 图片的实际显示尺寸（未缩放）
+        const imgWidth = imgRef.current.width;
+        const imgHeight = imgRef.current.height;
+        const imgCenterX = imgWidth / 2;
+        const imgCenterY = imgHeight / 2;
+
+        // 相对于Main Area中心的偏移
+        const offsetX = mouseX - mainCenterX;
+        const offsetY = mouseY - mainCenterY;
+
+        // 逆向应用transform: (offset - pan) / zoom
+        const unscaledOffsetX = (offsetX - pan.x) / zoom;
+        const unscaledOffsetY = (offsetY - pan.y) / zoom;
+
+        // 转换为canvas坐标（相对于图片左上角）
+        const canvasX = unscaledOffsetX + imgCenterX;
+        const canvasY = unscaledOffsetY + imgCenterY;
+
+        console.log('坐标转换调试:', {
+            client: { x: clientX, y: clientY },
+            mainRect: { left: mainRect.left, top: mainRect.top, width: mainRect.width, height: mainRect.height },
+            mouse: { x: mouseX, y: mouseY },
+            mainCenter: { x: mainCenterX, y: mainCenterY },
+            imgSize: { width: imgWidth, height: imgHeight },
+            imgCenter: { x: imgCenterX, y: imgCenterY },
+            offset: { x: offsetX, y: offsetY },
+            zoom,
+            pan,
+            unscaledOffset: { x: unscaledOffsetX, y: unscaledOffsetY },
+            result: { x: canvasX, y: canvasY }
+        });
+
+        return { x: canvasX, y: canvasY };
+    };
+
     // --- Crop Logic ---
     const applyCrop = () => {
         if (completedCrop && imgRef.current) {
@@ -334,9 +399,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        const rect = canvas.getBoundingClientRect();
+        const coords = getCanvasCoordinates(e.clientX, e.clientY, canvas);
         ctx.beginPath();
-        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+        ctx.moveTo(coords.x, coords.y);
     };
 
     const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -351,8 +416,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        const rect = canvas.getBoundingClientRect();
-        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+        const coords = getCanvasCoordinates(e.clientX, e.clientY, canvas);
+        ctx.lineTo(coords.x, coords.y);
         ctx.stroke();
     };
 
@@ -395,9 +460,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) return;
 
-        const rect = canvas.getBoundingClientRect();
-        const x = Math.floor(e.clientX - rect.left);
-        const y = Math.floor(e.clientY - rect.top);
+        const coords = getCanvasCoordinates(e.clientX, e.clientY, canvas);
+        const x = Math.floor(coords.x);
+        const y = Math.floor(coords.y);
 
         floodFill(ctx, x, y, tolerance);
     };
@@ -454,12 +519,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
 
+        // 获取canvas坐标（考虑zoom和pan）
+        const coords = getCanvasCoordinates(e.clientX, e.clientY, canvas);
+
         // Calculate scale factors (CSS size vs Actual size)
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
 
-        const x = (e.clientX - rect.left) * scaleX;
-        const y = (e.clientY - rect.top) * scaleY;
+        const x = coords.x * scaleX;
+        const y = coords.y * scaleY;
 
         // Add point (Left click = positive, Shift+Click = negative)
         const label = e.shiftKey ? 0 : 1;
@@ -610,11 +678,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
 
         const rect = canvas.getBoundingClientRect();
 
+        // 获取canvas坐标（考虑zoom和pan）
+        const coords = getCanvasCoordinates(e.clientX, e.clientY, canvas);
+
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
 
-        const x = (e.clientX - rect.left) * scaleX;
-        const y = (e.clientY - rect.top) * scaleY;
+        const x = coords.x * scaleX;
+        const y = coords.y * scaleY;
 
         ctx.save();
         if (pixelMode === 'ERASE') {
@@ -997,7 +1068,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                     className="transition-transform duration-75 ease-out"
                     style={{
                         transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                        transformOrigin: 'center'
+                        transformOrigin: 'center center'
                     }}
                 >
                     {/* Image / Canvas Container - 保持原始坐标系 */}
