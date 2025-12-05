@@ -3,7 +3,7 @@ import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-im
 import 'react-image-crop/dist/ReactCrop.css';
 import {
     Crop as CropIcon,
-    Maximize,
+    Scan,
     Pen,
     Save,
     RotateCcw,
@@ -14,10 +14,10 @@ import {
     Undo2,
     Wand2,
     Sparkles,
-    Scan,
+    Target,
     ZoomIn,
     ZoomOut,
-    Brush,
+    Eraser,
     ImageOff,
     Scissors,
     Hand
@@ -740,7 +740,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                             className={`p-2 rounded-lg transition-colors ${mode === 'RESIZE' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
                             title="Resize"
                         >
-                            <Maximize className="w-5 h-5" />
+                            <Scan className="w-5 h-5" />
                         </button>
 
                         <div className="h-6 w-px bg-slate-700 mx-2 self-center"></div>
@@ -758,7 +758,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                             className={`p-2 rounded-lg transition-colors ${mode === 'PIXEL_EDIT' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
                             title="Pixel Eraser"
                         >
-                            <Brush className="w-5 h-5" />
+                            <Eraser className="w-5 h-5" />
                         </button>
                         <button
                             onClick={() => setMode(mode === 'BACKGROUND' ? null : 'BACKGROUND')}
@@ -776,7 +776,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                             className={`p-2 rounded-lg transition-colors ${mode === 'SEGMENT' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
                             title="Segment Anything"
                         >
-                            <Scan className="w-5 h-5" />
+                            <Target className="w-5 h-5" />
                         </button>
 
                         <div className="h-6 w-px bg-slate-700 mx-2 self-center"></div>
