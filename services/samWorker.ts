@@ -2,8 +2,29 @@ import { env, SamModel, AutoProcessor, RawImage, Tensor } from '@xenova/transfor
 
 // Skip local model check
 env.allowLocalModels = false;
-// Disable browser cache to avoid storage access issues in some environments
-env.useBrowserCache = false;
+
+// Check if browser cache is accessible (some environments block it)
+async function checkCacheAccess(): Promise<boolean> {
+    try {
+        if (typeof caches === 'undefined') return false;
+        const testCache = await caches.open('transformers-cache-test');
+        await caches.delete('transformers-cache-test');
+        return true;
+    } catch (e) {
+        console.warn('[SAM Worker] Cache API not accessible, will download models each time:', e);
+        return false;
+    }
+}
+
+// Initialize cache setting
+let cacheCheckDone = false;
+async function ensureCacheChecked() {
+    if (cacheCheckDone) return;
+    const canUseCache = await checkCacheAccess();
+    env.useBrowserCache = canUseCache;
+    cacheCheckDone = true;
+    console.log('[SAM Worker] Browser cache enabled:', canUseCache);
+}
 
 interface SAMState {
     model: any;
@@ -51,6 +72,9 @@ self.onmessage = async (e: MessageEvent) => {
 };
 
 async function handleLoadModel(modelId: string, messageId: string) {
+    // Check cache accessibility before loading
+    await ensureCacheChecked();
+    
     // If same model is already loaded, do nothing
     if (samState.model && samState.processor && samState.currentModelId === modelId) {
         self.postMessage({ id: messageId, type: 'modelLoaded' });
