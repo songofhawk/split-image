@@ -50,6 +50,7 @@ interface EditorOptionsBarProps {
     samPointsCount: number;
     hasSamMask: boolean;
     isLoading: boolean;
+    isGeneratingMask: boolean;
     onSamModelChange: (model: SamModelType) => void;
     onGenerateMask: () => void;
     onApplySamMask: () => void;
@@ -91,6 +92,7 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
     samPointsCount,
     hasSamMask,
     isLoading,
+    isGeneratingMask,
     onSamModelChange,
     onGenerateMask,
     onApplySamMask
@@ -166,6 +168,7 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
                         pointsCount={samPointsCount}
                         hasMask={hasSamMask}
                         isLoading={isLoading}
+                        isGeneratingMask={isGeneratingMask}
                         onModelChange={onSamModelChange}
                         onGenerateMask={onGenerateMask}
                         onApply={onApplySamMask}

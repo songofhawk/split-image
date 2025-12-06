@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Sparkles } from 'lucide-react';
+import { Check, Sparkles, Loader2 } from 'lucide-react';
 import { SamModelType, SamMaskData } from '../../../types/editor';
 
 interface SegmentOptionsProps {
@@ -7,6 +7,7 @@ interface SegmentOptionsProps {
     pointsCount: number;
     hasMask: boolean;
     isLoading: boolean;
+    isGeneratingMask: boolean;
     onModelChange: (model: SamModelType) => void;
     onGenerateMask: () => void;
     onApply: () => void;
@@ -17,6 +18,7 @@ export const SegmentOptions: React.FC<SegmentOptionsProps> = ({
     pointsCount,
     hasMask,
     isLoading,
+    isGeneratingMask,
     onModelChange,
     onGenerateMask,
     onApply
@@ -41,18 +43,22 @@ export const SegmentOptions: React.FC<SegmentOptionsProps> = ({
 
             <button
                 onClick={onGenerateMask}
-                disabled={pointsCount === 0}
+                disabled={pointsCount === 0 || isLoading || isGeneratingMask}
                 className="flex items-center gap-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs"
             >
-                <Sparkles className="w-3 h-3" />
-                Generate Mask
+                {isGeneratingMask ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                    <Sparkles className="w-3 h-3" />
+                )}
+                {isGeneratingMask ? 'Generating...' : 'Generate Mask'}
             </button>
 
             <div className="h-4 w-px bg-slate-700"></div>
 
             <button
                 onClick={onApply}
-                disabled={!hasMask}
+                disabled={!hasMask || isLoading || isGeneratingMask}
                 className="px-3 py-1 bg-cyan-600 rounded text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-xs flex items-center gap-1"
             >
                 <Check className="w-3 h-3" /> Apply

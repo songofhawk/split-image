@@ -1,0 +1,201 @@
+import { env, SamModel, AutoProcessor, RawImage, Tensor } from '@xenova/transformers';
+
+// Skip local model check
+env.allowLocalModels = false;
+
+interface SAMState {
+    model: any;
+    processor: any;
+    imageEmbeddings: any;
+    imageInputs: any;
+    rawImage: any;
+    currentModelId: string | null;
+}
+
+let samState: SAMState = {
+    model: null,
+    processor: null,
+    imageEmbeddings: null,
+    imageInputs: null,
+    rawImage: null,
+    currentModelId: null
+};
+
+// Message handlers
+self.onmessage = async (e: MessageEvent) => {
+    const { type, payload, id } = e.data;
+
+    try {
+        switch (type) {
+            case 'loadModel':
+                await handleLoadModel(payload.modelId, id);
+                break;
+            case 'computeEmbeddings':
+                await handleComputeEmbeddings(payload.imageUrl, id);
+                break;
+            case 'generateMask':
+                await handleGenerateMask(payload.points, id);
+                break;
+            default:
+                throw new Error(`Unknown message type: ${type}`);
+        }
+    } catch (error) {
+        self.postMessage({
+            id,
+            type: 'error',
+            error: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+};
+
+async function handleLoadModel(modelId: string, messageId: string) {
+    // If same model is already loaded, do nothing
+    if (samState.model && samState.processor && samState.currentModelId === modelId) {
+        self.postMessage({ id: messageId, type: 'modelLoaded' });
+        return;
+    }
+
+    // Reset state if switching models
+    samState.model = null;
+    samState.processor = null;
+    samState.imageEmbeddings = null;
+    samState.imageInputs = null;
+    samState.currentModelId = null;
+
+    console.log(`[Worker] Loading SAM Model: ${modelId}`);
+
+    samState.model = await SamModel.from_pretrained(modelId, {
+        quantized: true,
+        progress_callback: (data: any) => {
+            if (data.status === 'progress') {
+                self.postMessage({
+                    id: messageId,
+                    type: 'progress',
+                    progress: data.progress
+                });
+            }
+        }
+    });
+
+    samState.processor = await AutoProcessor.from_pretrained(modelId);
+    samState.currentModelId = modelId;
+
+    self.postMessage({ id: messageId, type: 'modelLoaded' });
+}
+
+async function handleComputeEmbeddings(imageUrl: string, messageId: string) {
+    if (!samState.model || !samState.processor) {
+        throw new Error("Model not loaded");
+    }
+
+    const image = await RawImage.fromURL(imageUrl);
+    samState.rawImage = image;
+
+    const inputs = await samState.processor(image);
+    samState.imageInputs = inputs;
+
+    // Compute embeddings
+    samState.imageEmbeddings = await samState.model.get_image_embeddings(inputs);
+
+    self.postMessage({
+        id: messageId,
+        type: 'embeddingsComputed',
+        result: {
+            width: image.width,
+            height: image.height
+        }
+    });
+}
+
+async function handleGenerateMask(points: { x: number, y: number, label: number }[], messageId: string) {
+    if (!samState.model || !samState.processor || !samState.imageEmbeddings || !samState.rawImage || !samState.imageInputs) {
+        throw new Error("Model or embeddings not ready");
+    }
+
+    const originalHeight = samState.rawImage.height;
+    const originalWidth = samState.rawImage.width;
+
+    // Calculate scale factor (SAM resizes longest side to 1024)
+    const targetSize = 1024;
+    const scale = targetSize / Math.max(originalHeight, originalWidth);
+
+    // Resize points
+    const resizedPoints = points.map(p => [p.x * scale, p.y * scale]);
+
+    // Create Tensors
+    const n = points.length;
+    const pointsFlat = resizedPoints.flat();
+    const labelsFlat = points.map(p => p.label);
+
+    const inputPointsTensor = new Tensor(
+        'float32',
+        new Float32Array(pointsFlat),
+        [1, 1, n, 2]
+    );
+
+    const inputLabelsTensor = new Tensor(
+        'int64',
+        new BigInt64Array(labelsFlat.map(l => BigInt(l))),
+        [1, 1, n]
+    );
+
+    // Run model
+    const outputs = await samState.model({
+        pixel_values: samState.imageInputs.pixel_values,
+        image_embeddings: samState.imageEmbeddings,
+        input_points: inputPointsTensor,
+        input_labels: inputLabelsTensor,
+    });
+
+    // Post-process masks
+    const originalSizes = [[originalHeight, originalWidth]];
+    const reshapedInputSizes = [[Math.round(originalHeight * scale), Math.round(originalWidth * scale)]];
+
+    const masks = await samState.processor.post_process_masks(
+        outputs.pred_masks,
+        originalSizes,
+        reshapedInputSizes
+    );
+
+    const maskTensor = masks[0];
+
+    // Select best mask based on iou_scores
+    const scores = outputs.iou_scores.data;
+    let bestIndex = 0;
+    let maxScore = -1;
+    for (let i = 0; i < scores.length; i++) {
+        if (scores[i] > maxScore) {
+            maxScore = scores[i];
+            bestIndex = i;
+        }
+    }
+
+    // Extract the best mask
+    const dims = maskTensor.dims;
+    let h, w;
+    if (dims.length === 4) {
+        h = dims[2];
+        w = dims[3];
+    } else {
+        h = dims[1];
+        w = dims[2];
+    }
+
+    const stride = h * w;
+    const start = bestIndex * stride;
+    const end = start + stride;
+    
+    // Convert to regular array for transfer
+    const maskData = Array.from(maskTensor.data.slice(start, end));
+
+    self.postMessage({
+        id: messageId,
+        type: 'maskGenerated',
+        result: {
+            data: maskData,
+            width: w,
+            height: h
+        }
+    });
+}
+

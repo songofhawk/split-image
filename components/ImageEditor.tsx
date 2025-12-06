@@ -108,6 +108,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
     const [isSamReady, setIsSamReady] = useState(false);
     const [isSamInitializing, setIsSamInitializing] = useState(false);
     const [samModel, setSamModel] = useState<SamModelType>('FAST');
+    const [isGeneratingMask, setIsGeneratingMask] = useState(false);
 
     // --- Pixel Edit State ---
     const [pixelBrushSize, setPixelBrushSize] = useState(10);
@@ -513,8 +514,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
 
     const handleGenerateMask = useCallback(async () => {
         if (samPoints.length === 0) return;
-        setIsLoading(true);
-        setLoadingText("Generating Mask...");
+        setIsGeneratingMask(true);
+        
         try {
             const mask = await generateMask(samPoints);
             setSamMask(mask);
@@ -522,8 +523,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
             console.error("Mask generation failed", error);
             alert("Failed to generate mask. See console for details.");
         } finally {
-            setIsLoading(false);
-            setLoadingText(null);
+            setIsGeneratingMask(false);
         }
     }, [samPoints]);
 
@@ -754,6 +754,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                 samPointsCount={samPoints.length}
                 hasSamMask={!!samMask}
                 isLoading={isLoading}
+                isGeneratingMask={isGeneratingMask}
                 onSamModelChange={setSamModel}
                 onGenerateMask={handleGenerateMask}
                 onApplySamMask={applySamMask}
