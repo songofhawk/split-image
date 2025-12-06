@@ -61,8 +61,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageSelected })
       <div
         className={`relative border-2 border-dashed rounded-2xl p-10 transition-all duration-300 text-center cursor-pointer group
           ${isDragging
-            ? 'border-cyan-400 bg-cyan-950/30'
-            : 'border-slate-600 hover:border-slate-400 hover:bg-slate-800/50 bg-slate-900/50'
+            ? 'border-purple-400 bg-purple-950/30'
+            : 'border-slate-600 hover:border-purple-400/50 hover:bg-slate-800/50 bg-slate-900/50'
           }
         `}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -79,8 +79,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageSelected })
         />
 
         <div className="flex flex-col items-center justify-center gap-4">
-          <div className="p-4 rounded-full bg-slate-800 group-hover:bg-slate-700 transition-colors">
-            <Upload className="w-10 h-10 text-cyan-400" />
+          <div className="p-4 rounded-full bg-gradient-to-br from-cyan-500/20 via-purple-500/20 to-orange-500/20 group-hover:from-cyan-500/30 group-hover:via-purple-500/30 group-hover:to-orange-500/30 transition-colors">
+            <Upload className="w-10 h-10 text-purple-400" />
           </div>
           <div>
             <h3 className="text-xl font-semibold text-white mb-1">

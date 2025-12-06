@@ -91,7 +91,7 @@ export const ResultGallery: React.FC<ResultGalleryProps> = ({ images, onReset })
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {images.map((img, index) => (
-          <div key={img.id} className="group relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-cyan-500/50 transition-all hover:shadow-xl hover:shadow-cyan-900/20">
+          <div key={img.id} className="group relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-purple-500/50 transition-all hover:shadow-xl hover:shadow-purple-900/20">
             <div className="absolute top-2 left-2 bg-black/60 backdrop-blur px-2 py-1 rounded text-xs font-mono text-slate-300 z-10">
               #{index + 1}
             </div>
@@ -121,7 +121,7 @@ export const ResultGallery: React.FC<ResultGalleryProps> = ({ images, onReset })
               <div className="flex gap-2">
                 <button
                   onClick={(e) => copyImageToClipboard(img.url, index, e)}
-                  className="p-2 rounded-full hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 transition-colors"
+                  className="p-2 rounded-full hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 transition-colors"
                   title="Copy to clipboard"
                 >
                   {copiedIndex === index ? (
@@ -132,7 +132,7 @@ export const ResultGallery: React.FC<ResultGalleryProps> = ({ images, onReset })
                 </button>
                 <button
                   onClick={() => downloadImage(img.url, index)}
-                  className="p-2 rounded-full hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 transition-colors"
+                  className="p-2 rounded-full hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 transition-colors"
                   title="Download this image"
                 >
                   <Download className="w-4 h-4" />

@@ -6,7 +6,8 @@ import { ImageEditor } from './components/ImageEditor';
 import { ResultGallery } from './components/ResultGallery';
 import { LoadingOverlay } from './components/LoadingOverlay';
 import { detectSeamsLocal } from './services/localSplitService';
-import { Layers, Sparkles } from 'lucide-react';
+import { Layers } from 'lucide-react';
+import logo from '/logo-small.png';
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(AppState.UPLOAD);
@@ -198,12 +199,12 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="bg-gradient-to-br from-cyan-500 to-blue-600 p-2 rounded-lg">
-              <Sparkles className="text-white w-5 h-5" />
-            </div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
-              SnapLab
+          <div className="flex items-end gap-2">
+            <img src={logo} alt="SnapLab" className="w-12 h-12 rounded-lg" />
+            <h1 className="text-xl font-bold leading-none mb-2">
+              <span className="text-cyan-400">Snap</span>
+              <span className="text-purple-400">L</span>
+              <span className="text-orange-400">ab</span>
             </h1>
           </div>
           <div className="text-sm text-slate-500">
@@ -223,7 +224,7 @@ const App: React.FC = () => {
               <div className="text-center mb-12 max-w-2xl">
                 <h2 className="text-4xl md:text-5xl font-bold text-white mb-6 tracking-tight">
                   Browser-based <br />
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-orange-400">
                     image editor
                   </span>
                 </h2>

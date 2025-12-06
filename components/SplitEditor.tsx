@@ -280,7 +280,7 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
         </button>
         <button
           onClick={() => onConfirm(rowSplits, colSplits)}
-          className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 transform hover:scale-105 transition-all"
+          className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-cyan-500 via-purple-500 to-orange-500 text-white rounded-xl font-bold shadow-lg shadow-purple-500/20 hover:from-cyan-400 hover:via-purple-400 hover:to-orange-400 transform hover:scale-105 transition-all"
         >
           <Scissors className="w-5 h-5" />
           Split into {(rowSplits.length + 1) * (colSplits.length + 1)} Images
