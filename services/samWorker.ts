@@ -2,6 +2,8 @@ import { env, SamModel, AutoProcessor, RawImage, Tensor } from '@xenova/transfor
 
 // Skip local model check
 env.allowLocalModels = false;
+// Disable browser cache to avoid storage access issues in some environments
+env.useBrowserCache = false;
 
 interface SAMState {
     model: any;
