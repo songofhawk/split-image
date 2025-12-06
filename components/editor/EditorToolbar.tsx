@@ -10,7 +10,7 @@ import {
     Target,
     Eraser,
     ImageOff,
-    Scissors
+    Grid
 } from 'lucide-react';
 import { EditMode } from '../../types/editor';
 
@@ -132,7 +132,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
                         className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                         title="Split"
                     >
-                        <Scissors className="w-5 h-5" />
+                        <Grid className="w-5 h-5" />
                     </button>
                     <button
                         onClick={onSave}
