@@ -51,6 +51,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         canUndo
     } = useImageHistory({ initialSrc: imageSrc });
 
+    // --- Original Image Ref (for RESTORE functionality) ---
+    const originalImgRef = useRef<HTMLImageElement | null>(null);
+
     // --- Mode State ---
     const [mode, setMode] = useState<EditMode>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -113,6 +116,51 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
     // --- Canvas Modified State (track unsaved changes) ---
     const [canvasModified, setCanvasModified] = useState(false);
 
+    // ========================
+    // 工具状态统一管理
+    // ========================
+    
+    // 判断某个模式是否是 canvas 编辑模式（直接在 canvas 上操作）
+    const isCanvasEditMode = useCallback((m: EditMode, bg: BgToolType = null): boolean => {
+        return m === 'ANNOTATE' || m === 'PIXEL_EDIT' || (m === 'BACKGROUND' && bg === 'magic');
+    }, []);
+
+    // 判断某个模式是否需要清理透明像素的 RGB 值
+    const needsTransparencyCleanup = useCallback((m: EditMode, bg: BgToolType = null): boolean => {
+        return m === 'PIXEL_EDIT' || (m === 'BACKGROUND' && bg === 'magic');
+    }, []);
+
+    // 清理透明像素的 RGB 值（设为 0,0,0）
+    const cleanupTransparentPixels = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] === 0) {
+                data[i] = 0;
+                data[i + 1] = 0;
+                data[i + 2] = 0;
+            }
+        }
+        ctx.putImageData(imageData, 0, 0);
+    }, []);
+
+    // 保存当前 canvas 到 history
+    const saveCanvasToHistory = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return false;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return false;
+
+        // 如果需要清理透明像素
+        if (needsTransparencyCleanup(mode, bgTool)) {
+            cleanupTransparentPixels(ctx, canvas.width, canvas.height);
+        }
+
+        pushToHistory(canvas.toDataURL('image/png'));
+        setCanvasModified(false);
+        return true;
+    }, [mode, bgTool, needsTransparencyCleanup, cleanupTransparentPixels, pushToHistory]);
+
     // --- Image Load Handler ---
     const onImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
         const { width, height } = e.currentTarget;
@@ -130,29 +178,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         }
     }, [history.length, resetView]);
 
+    // --- Load Original Image for RESTORE ---
+    useEffect(() => {
+        if (history.length > 0 && history[0]) {
+            const img = new Image();
+            img.src = history[0];
+            img.onload = () => {
+                originalImgRef.current = img;
+            };
+        }
+    }, [history[0]]);
+
     // --- Mode Change Handler ---
     const handleModeChange = useCallback((newMode: EditMode) => {
-        // 如果从 ANNOTATE 或 PIXEL_EDIT 切换出去，且有未保存的修改，自动保存
-        if ((mode === 'ANNOTATE' || mode === 'PIXEL_EDIT') && canvasModified && canvasRef.current) {
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                // 对于 PIXEL_EDIT，清理透明像素的 RGB 值
-                if (mode === 'PIXEL_EDIT') {
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    const data = imageData.data;
-                    for (let i = 0; i < data.length; i += 4) {
-                        if (data[i + 3] === 0) {
-                            data[i] = 0;
-                            data[i + 1] = 0;
-                            data[i + 2] = 0;
-                        }
-                    }
-                    ctx.putImageData(imageData, 0, 0);
-                }
-                pushToHistory(canvas.toDataURL('image/png'));
-            }
-            setCanvasModified(false);
+        // 统一规则：从任何 canvas 编辑模式切换出去时，如果有未保存的修改，自动保存
+        if (isCanvasEditMode(mode, bgTool) && canvasModified) {
+            saveCanvasToHistory();
         }
 
         setMode(newMode);
@@ -163,7 +204,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         if (newMode !== 'BACKGROUND') {
             setBgTool(null);
         }
-    }, [mode, canvasModified, pushToHistory]);
+    }, [mode, bgTool, canvasModified, isCanvasEditMode, saveCanvasToHistory]);
 
     // --- Undo with Mode Reset ---
     const handleUndoWithReset = useCallback(() => {
@@ -387,15 +428,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
         const y = Math.floor(coords.y);
 
         floodFill(ctx, x, y, tolerance);
+        setCanvasModified(true);
     }, [getCanvasCoordinates, tolerance]);
 
     const applyBackgroundChanges = useCallback(() => {
-        if (canvasRef.current) {
-            pushToHistory(canvasRef.current.toDataURL('image/png'));
+        if (saveCanvasToHistory()) {
             setMode(null);
             setBgTool(null);
         }
-    }, [pushToHistory]);
+    }, [saveCanvasToHistory]);
 
     // ========================
     // Segment Anything Logic
@@ -529,11 +570,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
             ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
             ctx.fill();
         } else {
+            // RESTORE: 从原始图像恢复，而不是从当前图像恢复
+            // 这样即使经过 magic wand 或 AI 去除背景后，仍然可以恢复原始颜色
+            const restoreSource = originalImgRef.current || imgRef.current;
             ctx.globalCompositeOperation = 'source-over';
             ctx.beginPath();
             ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
             ctx.clip();
-            ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
+            // 需要根据原始图像尺寸正确缩放
+            ctx.drawImage(restoreSource, 0, 0, canvas.width, canvas.height);
         }
         ctx.restore();
         setCanvasModified(true);
@@ -592,29 +637,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
     }, []);
 
     const applyAnnotation = useCallback(() => {
-        if (canvasRef.current) {
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-
-            if (mode === 'PIXEL_EDIT') {
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 4) {
-                    if (data[i + 3] === 0) {
-                        data[i] = 0;
-                        data[i + 1] = 0;
-                        data[i + 2] = 0;
-                    }
-                }
-                ctx.putImageData(imageData, 0, 0);
-            }
-
-            pushToHistory(canvas.toDataURL('image/png'));
+        if (saveCanvasToHistory()) {
             setMode(null);
-            setCanvasModified(false);
         }
-    }, [mode, pushToHistory]);
+    }, [saveCanvasToHistory]);
 
     // ========================
     // Render
@@ -634,11 +660,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                 onCopy={async () => {
                     try {
                         let srcToUse = currentSrc;
-                        if ((mode === 'ANNOTATE' || mode === 'PIXEL_EDIT') && canvasRef.current) {
+                        // 统一规则：如果当前是 canvas 编辑模式且有修改，先保存
+                        if (isCanvasEditMode(mode, bgTool) && canvasRef.current) {
                             srcToUse = canvasRef.current.toDataURL('image/png');
                             if (canvasModified) {
-                                pushToHistory(srcToUse);
-                                setCanvasModified(false);
+                                saveCanvasToHistory();
                                 setMode(null);
                             }
                         }
@@ -653,11 +679,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onSp
                 }}
                 onDownload={() => {
                     let srcToUse = currentSrc;
-                    if ((mode === 'ANNOTATE' || mode === 'PIXEL_EDIT') && canvasRef.current) {
+                    // 统一规则：如果当前是 canvas 编辑模式且有修改，先保存
+                    if (isCanvasEditMode(mode, bgTool) && canvasRef.current) {
                         srcToUse = canvasRef.current.toDataURL('image/png');
                         if (canvasModified) {
-                            pushToHistory(srcToUse);
-                            setCanvasModified(false);
+                            saveCanvasToHistory();
                             setMode(null);
                         }
                     }
